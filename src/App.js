@@ -12,6 +12,7 @@ import SlotList from './components/SlotList';
 import GameInput from './components/GameInput';
 import GameList from './components/GameList';
 import PlayerManager from './components/PlayerManager';
+import ConfirmationDialog from './components/ConfirmationDialog'; // Import the new component
 
 function App() {
   const { auth, user, db, appId, userId } = useFirebase();
@@ -22,6 +23,11 @@ function App() {
   const [message, setMessage] = useState('');
   const [showPlayerManager, setShowPlayerManager] = useState(false);
   const [masterPlayerList, setMasterPlayerList] = useState([]);
+
+  // NEW STATE FOR CONFIRMATION DIALOG
+  const [showCancelGameConfirm, setShowCancelGameConfirm] = useState(false);
+  const [gameToCancelId, setGameToCancelId] = useState(null);
+  const [gameToCancelNumber, setGameToCancelNumber] = useState(null);
 
   // Helper function to display temporary messages to the user
   const displayMessage = (msg) => {
@@ -337,7 +343,7 @@ function App() {
         winnerPlayerName: null,
         pointsTransferred: 0,
         endedAt: null,
-        isRotationGame: false, // NEW: Default to false when creating a new game
+        isRotationGame: false,
       });
 
       displayMessage(`New game ${nextGameNumber} created for Slot ${selectedSlot.slotId}.`);
@@ -347,33 +353,50 @@ function App() {
     }
   };
 
-  // New function to handle cancelling/deleting the active game
-  const handleCancelGame = async () => {
+  // MODIFIED: Handles the UI trigger for cancelling the active game
+  const handleCancelGame = () => {
     if (!db || !user || !appId || !userId || !selectedSlot) {
       displayMessage("Database not ready, user not signed in, or no slot selected.");
       return;
     }
-    // Check if there's an active game to cancel
     if (games.length === 0 || games[0].endedAt) {
       displayMessage("No active game to cancel.");
       return;
     }
 
-    const activeGameId = games[0].id;
-    const activeGameNumber = games[0].gameNumber;
+    // Set state to show the confirmation dialog
+    setGameToCancelId(games[0].id);
+    setGameToCancelNumber(games[0].gameNumber);
+    setShowCancelGameConfirm(true);
+  };
 
-    if (window.confirm(`Are you sure you want to cancel Game ${activeGameNumber}? This action cannot be undone.`)) {
-      try {
-        const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeGameId);
-        await deleteDoc(gameDocRef);
-        displayMessage(`Game ${activeGameNumber} cancelled successfully.`);
-        // After cancellation, the useEffect for games will re-run and update the state
-        // currentGamePlayers will then default to empty or previous slot's players.
-      } catch (error) {
-        console.error("Error cancelling game:", error);
-        displayMessage(`Error cancelling game: ${error.message}`);
-      }
+  // NEW: Actual function to perform the cancellation after confirmation
+  const confirmCancelGame = async () => {
+    if (!db || !user || !appId || !userId || !selectedSlot || !gameToCancelId) {
+      displayMessage("Cannot cancel game: Missing data.");
+      return;
     }
+
+    try {
+      const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, gameToCancelId);
+      await deleteDoc(gameDocRef);
+      displayMessage(`Game ${gameToCancelNumber} cancelled successfully.`);
+    } catch (error) {
+      console.error("Error cancelling game:", error);
+      displayMessage(`Error cancelling game: ${error.message}`);
+    } finally {
+      // Always hide the dialog and clear states
+      setShowCancelGameConfirm(false);
+      setGameToCancelId(null);
+      setGameToCancelNumber(null);
+    }
+  };
+
+  // NEW: Function to dismiss the cancel game dialog
+  const dismissCancelGame = () => {
+    setShowCancelGameConfirm(false);
+    setGameToCancelId(null);
+    setGameToCancelNumber(null);
   };
 
   // Handles adding a player to the master player list in Firestore
@@ -461,7 +484,7 @@ function App() {
     setCurrentGamePlayers(updatedPlayers);
   };
 
-  // NEW: Handles toggling the 'isRotationGame' field for the current active game
+  // Handles toggling the 'isRotationGame' field for the current active game
   const handleToggleRotationForCurrentGame = async (isRotation) => {
     if (!db || !user || !appId || !userId || !selectedSlot || games.length === 0 || games[0].endedAt) {
       displayMessage("Cannot update rotation status: No active game.");
@@ -574,9 +597,7 @@ function App() {
           {/* Global Player Management Button - available when user is logged in */}
           <button
             onClick={() => setShowPlayerManager(true)}
-            // MODIFIED: Reduced scale and added translate-y
             className="w-full px-6 py-3 mb-6 bg-purple-700 hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-102 hover:-translate-y-0.5"
-            // Disable if a game is active in a selected slot, as player roster for active game is fixed
             disabled={selectedSlot && games.length > 0 && !games[0].endedAt}
           >
             {selectedSlot && games.length > 0 && !games[0].endedAt ? "End Current Game to Manage Players" : "Manage Your Player Roster"}
@@ -592,15 +613,15 @@ function App() {
               </h2>
 
               <GameInput
-                currentGamePlayers={currentGamePlayers} // Players for active game or selected for next
+                currentGamePlayers={currentGamePlayers}
                 handleUpdatePlayerScore={handleUpdatePlayerScore}
                 handleEndGame={handleEndGame}
                 handleCreateNewGame={handleCreateNewGame}
-                handleCancelGame={handleCancelGame}
+                handleCancelGame={handleCancelGame} // This now triggers the custom dialog
                 games={games}
                 masterPlayerList={masterPlayerList}
-                onTogglePlayerForNextGame={onTogglePlayerForNextGame} // Function to select/deselect players for next game
-                onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame} // NEW PROP
+                onTogglePlayerForNextGame={onTogglePlayerForNextGame}
+                onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame}
               />
 
               <GameList games={games} />
@@ -623,12 +644,21 @@ function App() {
       {/* Player Manager Modal */}
       {showPlayerManager && (
         <PlayerManager
-          masterPlayerList={masterPlayerList} // Pass the master player list to the manager
-          onAddPlayer={handleAddPlayerToMasterList} // Function to add to master list in Firestore
-          onRemovePlayer={handleRemovePlayerFromMasterList} // Function to remove from master list in Firestore
+          masterPlayerList={masterPlayerList}
+          onAddPlayer={handleAddPlayerToMasterList}
+          onRemovePlayer={handleRemovePlayerFromMasterList}
           onClose={() => setShowPlayerManager(false)}
         />
       )}
+
+      {/* Confirmation Dialog for Cancel Game */}
+      <ConfirmationDialog
+        show={showCancelGameConfirm}
+        title="Confirm Game Cancellation"
+        message={`Are you sure you want to cancel Game ${gameToCancelNumber}? This action cannot be undone.`}
+        onConfirm={confirmCancelGame}
+        onCancel={dismissCancelGame}
+      />
     </div>
   );
 }
