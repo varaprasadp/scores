@@ -9,10 +9,14 @@ function GameInput({
   handleCancelGame,
   games,
   masterPlayerList,
-  onTogglePlayerForNextGame
+  onTogglePlayerForNextGame,
+  // NEW PROP: Function to update the rotation status of the current game
+  onToggleRotationForCurrentGame
 }) {
   // Determine if there's an active game (first game in the array and not ended)
   const isGameActive = games.length > 0 && !games[0].endedAt;
+  // NEW: Get the rotation status of the active game
+  const isCurrentGameRotation = isGameActive ? games[0].isRotationGame : false;
 
   // Handler for ending the current game
   const handleEndGameClick = () => {
@@ -22,6 +26,14 @@ function GameInput({
   // Handler for cancelling the current game
   const handleCancelGameClick = () => {
     handleCancelGame();
+  };
+
+  // NEW: Handler for toggling rotation status
+  const handleToggleRotationClick = () => {
+    // Only call if a game is active
+    if (isGameActive) {
+      onToggleRotationForCurrentGame(!isCurrentGameRotation);
+    }
   };
 
   // --- LOGIC FOR DISABLING WINNER INPUT ---
@@ -85,6 +97,21 @@ function GameInput({
               );
             })}
           </div>
+
+          {/* NEW: Rotation Checkbox */}
+          <div className="flex items-center mt-4 mb-6">
+            <input
+              type="checkbox"
+              id="isRotationGame"
+              checked={isCurrentGameRotation}
+              onChange={handleToggleRotationClick}
+              className="form-checkbox h-5 w-5 text-purple-600 rounded"
+            />
+            <label htmlFor="isRotationGame" className="ml-2 text-white text-md cursor-pointer">
+              This was a Rotation Game
+            </label>
+          </div>
+
 
           <div className="flex gap-4 mt-6">
             <button

@@ -337,6 +337,7 @@ function App() {
         winnerPlayerName: null,
         pointsTransferred: 0,
         endedAt: null,
+        isRotationGame: false, // NEW: Default to false when creating a new game
       });
 
       displayMessage(`New game ${nextGameNumber} created for Slot ${selectedSlot.slotId}.`);
@@ -460,6 +461,29 @@ function App() {
     setCurrentGamePlayers(updatedPlayers);
   };
 
+  // NEW: Handles toggling the 'isRotationGame' field for the current active game
+  const handleToggleRotationForCurrentGame = async (isRotation) => {
+    if (!db || !user || !appId || !userId || !selectedSlot || games.length === 0 || games[0].endedAt) {
+      displayMessage("Cannot update rotation status: No active game.");
+      return;
+    }
+
+    const activeGameId = games[0].id;
+    const activeGameNumber = games[0].gameNumber;
+
+    try {
+      const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeGameId);
+      await updateDoc(gameDocRef, {
+        isRotationGame: isRotation,
+      });
+      displayMessage(`Game ${activeGameNumber} rotation status updated to: ${isRotation ? 'Yes' : 'No'}.`);
+    } catch (error) {
+      console.error("Error updating rotation status:", error);
+      displayMessage(`Error updating rotation status: ${error.message}`);
+    }
+  };
+
+
   // Handles ending the current active game
   const handleEndGame = async () => {
     if (!selectedSlot || games.length === 0 || games[0].endedAt) {
@@ -522,6 +546,7 @@ function App() {
         winnerPlayerName: winnerPlayer.name,
         pointsTransferred: totalPointsFromLosers,
         endedAt: Date.now(), // Mark the game as ended
+        // isRotationGame: games[0].isRotationGame, // Keep the existing value
       });
 
       displayMessage(`Game ${games[0].gameNumber} ended! ${winnerPlayer.name} won ${totalPointsFromLosers} points!`);
@@ -575,6 +600,7 @@ function App() {
                 games={games}
                 masterPlayerList={masterPlayerList}
                 onTogglePlayerForNextGame={onTogglePlayerForNextGame} // Function to select/deselect players for next game
+                onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame} // NEW PROP
               />
 
               <GameList games={games} />

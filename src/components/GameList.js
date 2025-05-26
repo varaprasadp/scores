@@ -20,7 +20,8 @@ function GameList({ games }) {
 
   games.forEach(game => {
     game.players.forEach(player => {
-      playerTotals[player.name] += player.score;
+      // Ensure player.score is treated as a number
+      playerTotals[player.name] += (player.score || 0);
     });
   });
 
@@ -48,13 +49,16 @@ function GameList({ games }) {
         <tbody className="divide-y divide-gray-700">
           {/* Game Rows (vertical) */}
           {games.slice().reverse().map((game) => { // Reverse to show latest game at the top
-            const isLatestGame = game.id === games[0].id; // Check if it's the latest game for styling
+            // const isLatestGame = game.id === games[0].id; // Not directly used for styling anymore in this snippet
             return (
               <tr key={game.id} className="hover:bg-gray-700 hover:bg-opacity-20">
                 <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-white">
                   Game {game.gameNumber}
                   {game.winnerPlayerName && (
                     <p className="font-normal text-green-400 text-xxs mt-1">({game.winnerPlayerName} won)</p>
+                  )}
+                  {game.isRotationGame && ( // NEW: Display rotation status
+                    <p className="font-normal text-purple-300 text-xxs mt-1">(Rotation)</p>
                   )}
                 </td>
                 {/* Scores for each player in this game */}
