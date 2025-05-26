@@ -36,8 +36,8 @@ function PlayerManager({ masterPlayerList, onAddPlayer, onRemovePlayer, onClose 
           />
           <button
             type="submit"
-            // Button style updated for consistency
-            className="px-5 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
+            // MODIFIED: Reduced scale and added translate-y
+            className="px-5 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-102 hover:-translate-y-0.5"
           >
             Add
           </button>
@@ -57,8 +57,8 @@ function PlayerManager({ masterPlayerList, onAddPlayer, onRemovePlayer, onClose 
                 <span className="font-medium text-white">{player.name}</span>
                 <button
                   onClick={() => onRemovePlayer(player.id, player.name)}
-                  // Remove button icon and color updated for consistency
-                  className="p-2 text-red-300 hover:text-red-500 transition duration-200 rounded-full hover:bg-white hover:bg-opacity-10"
+                  // MODIFIED: Reduced scale and added translate-y
+                  className="p-2 text-red-300 hover:text-red-500 transition duration-200 rounded-full hover:bg-white hover:bg-opacity-10 transform hover:scale-102 hover:-translate-y-0.5"
                   title={`Remove ${player.name}`}
                 >
                   <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">

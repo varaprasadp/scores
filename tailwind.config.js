@@ -3,7 +3,7 @@
 module.exports = {
   content: [
     "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}", // This line is crucial!
+    "./src/**/*.{js,ts,jsx,tsx,css}",
   ],
   theme: {
     extend: {},

@@ -2,27 +2,25 @@
 import React, { useEffect, useState } from 'react';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { useFirebase } from './contexts/FirebaseContext';
-import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, updateDoc, where, getDocs, limit } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, onSnapshot, orderBy, query, where, getDocs, limit, updateDoc } from 'firebase/firestore';
 
 // Components
 import Header from './components/Header';
 import AuthButtons from './components/AuthButtons';
 import MessageDisplay from './components/MessageDisplay';
+import SlotList from './components/SlotList';
+import GameInput from './components/GameInput';
 import GameList from './components/GameList';
-import RoundInput from './components/RoundInput';
-import RoundList from './components/RoundList';
 import PlayerManager from './components/PlayerManager';
 
 function App() {
   const { auth, user, db, appId, userId } = useFirebase();
+  const [slots, setSlots] = useState([]);
+  const [selectedSlot, setSelectedSlot] = useState(null);
   const [games, setGames] = useState([]);
-  const [selectedGame, setSelectedGame] = useState(null);
-  const [rounds, setRounds] = useState([]);
-  // currentRoundPlayers holds players for the active round OR selected players for the next round
-  const [currentRoundPlayers, setCurrentRoundPlayers] = useState([]);
+  const [currentGamePlayers, setCurrentGamePlayers] = useState([]);
   const [message, setMessage] = useState('');
   const [showPlayerManager, setShowPlayerManager] = useState(false);
-  // masterPlayerList holds all players managed by the user, fetched from Firestore
   const [masterPlayerList, setMasterPlayerList] = useState([]);
 
   // Helper function to display temporary messages to the user
@@ -65,42 +63,42 @@ function App() {
     try {
       await signOut(auth);
       displayMessage("Signed out successfully!");
-      // Clear all game-related states on sign out
+      // Clear all slot-related states on sign out
+      setSlots([]);
+      setSelectedSlot(null);
       setGames([]);
-      setSelectedGame(null);
-      setRounds([]);
-      setCurrentRoundPlayers([]);
-      setMasterPlayerList([]); // Clear master player list as well
+      setCurrentGamePlayers([]);
+      setMasterPlayerList([]);
     } catch (error) {
       console.error("Error during sign-out:", error);
       displayMessage(`Sign-out failed: ${error.message}`);
     }
   };
 
-  // Effect hook to fetch user's games from Firestore
+  // Effect hook to fetch user's slots from Firestore
   useEffect(() => {
     // Ensure Firebase is ready and user is logged in before attempting to fetch
     if (!db || !user || !appId || !userId) {
-      console.log("Firestore not ready or user not logged in. Skipping game fetch.");
-      setGames([]);
+      console.log("Firestore not ready or user not logged in. Skipping slot fetch.");
+      setSlots([]);
       return;
     }
 
-    // Reference to the user's games collection
-    const userGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/games`);
-    // Create a query to order games by creation time in descending order
-    const q = query(userGamesCollectionRef, orderBy('createdAt', 'desc'));
+    // Reference to the user's slots collection
+    const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
+    // Create a query to order slots by creation time in descending order
+    const q = query(userSlotsCollectionRef, orderBy('createdAt', 'desc'));
 
-    // Set up a real-time listener for games
+    // Set up a real-time listener for slots
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedGames = snapshot.docs.map(doc => ({
+      const fetchedSlots = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      setGames(fetchedGames);
+      setSlots(fetchedSlots);
     }, (error) => {
-      console.error("Error fetching games:", error);
-      displayMessage(`Error fetching games: ${error.message}`);
+      console.error("Error fetching slots:", error);
+      displayMessage(`Error fetching slots: ${error.message}`);
     });
 
     // Clean up the listener when the component unmounts or dependencies change
@@ -140,118 +138,117 @@ function App() {
     return () => unsubscribe();
   }, [db, user, appId, userId]); // Dependencies for this effect
 
-  // Effect hook to fetch rounds for the selected game and manage current round players
+  // Effect hook to fetch games for the selected slot and manage current game players
   useEffect(() => {
-    // Clear rounds and current players if Firebase not ready or no game selected
-    if (!db || !user || !appId || !userId || !selectedGame) {
-      setCurrentRoundPlayers([]);
-      setRounds([]);
+    // Clear games and current players if Firebase not ready or no slot selected
+    if (!db || !user || !appId || !userId || !selectedSlot) {
+      setCurrentGamePlayers([]);
+      setGames([]);
       return;
     }
 
-    // Reference to the rounds subcollection for the selected game
-    const gameRoundsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/games/${selectedGame.id}/rounds`);
-    // Query to get rounds ordered by round number in descending order
-    const q = query(gameRoundsCollectionRef, orderBy('roundNumber', 'desc'));
+    // Reference to the games subcollection for the selected slot
+    const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
+    // Query to get games ordered by game number in descending order
+    const q = query(slotGamesCollectionRef, orderBy('gameNumber', 'desc'));
 
-    // Set up a real-time listener for rounds
-    const unsubscribe = onSnapshot(q, async (snapshot) => { // Made async to allow fetching previous game's rounds
-      const fetchedRounds = snapshot.docs.map(doc => ({
+    // Set up a real-time listener for games
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const fetchedGames = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      setRounds(fetchedRounds);
+      setGames(fetchedGames);
 
-      let playersForNextRound = [];
+      let playersForNextGame = [];
 
-      if (fetchedRounds.length > 0) {
-        // Case 1: Active round exists for the current game
-        if (!fetchedRounds[0].endedAt) {
-          playersForNextRound = fetchedRounds[0].players.map(p => ({ ...p, score: p.score || 0 }));
+      if (fetchedGames.length > 0) {
+        // Case 1: Active game exists for the current slot
+        if (!fetchedGames[0].endedAt) {
+          playersForNextGame = fetchedGames[0].players.map(p => ({ ...p, score: p.score || 0 }));
         } else {
-          // Case 2: Last round ended in the current game, so default to players from that last completed round
-          const lastCompletedRound = fetchedRounds.find(round => round.endedAt);
-          if (lastCompletedRound) {
-            playersForNextRound = lastCompletedRound.players.map(p => ({ name: p.name, score: 0 }));
+          // Case 2: Last game ended in the current slot, so default to players from that last completed game
+          const lastCompletedGame = fetchedGames.find(game => game.endedAt);
+          if (lastCompletedGame) {
+            playersForNextGame = lastCompletedGame.players.map(p => ({ name: p.name, score: 0 }));
           } else {
-            // Fallback: If no completed rounds in current game (unlikely if fetchedRounds > 0 and not active)
-            // This scenario should ideally be covered by the next "else" block.
-            console.warn("Unexpected state: fetchedRounds exist but no active or completed rounds.");
+            // Fallback: If no completed games in current slot (unlikely if fetchedGames > 0 and not active)
+            console.warn("Unexpected state: fetchedGames exist but no active or completed games.");
           }
         }
       } else {
-        // Case 3: No rounds exist for the current game.
-        // Try to get players from the last completed round of the most recent *previous* game.
-        let defaultPlayersFromPreviousGame = [];
+        // Case 3: No games exist for the current slot.
+        // Try to get players from the last completed game of the most recent *previous* slot.
+        let defaultPlayersFromPreviousSlot = [];
 
-        const userGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/games`);
-        // Get games ordered by creation time, limiting to 2.
-        // This will give us the selected game and potentially the one before it.
-        const gamesQuery = query(userGamesCollectionRef, orderBy('createdAt', 'desc'), limit(2));
-        const gamesSnapshot = await getDocs(gamesQuery);
+        const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
+        // Get slots ordered by creation time, limiting to 2.
+        // This will give us the selected slot and potentially the one before it.
+        const slotsQuery = query(userSlotsCollectionRef, orderBy('createdAt', 'desc'), limit(2));
+        const slotsSnapshot = await getDocs(slotsQuery);
 
-        let previousGameId = null;
-        // Iterate to find the game that is NOT the currently selected game.
-        gamesSnapshot.docs.forEach(doc => {
-            if (doc.id !== selectedGame.id) {
-                previousGameId = doc.id;
+        let previousSlotId = null;
+        // Iterate to find the slot that is NOT the currently selected slot.
+        slotsSnapshot.docs.forEach(doc => {
+            if (doc.id !== selectedSlot.id) {
+                previousSlotId = doc.id;
             }
         });
 
-        if (previousGameId) {
-          const previousGameRoundsRef = collection(db, `artifacts/${appId}/users/${userId}/games/${previousGameId}/rounds`);
-          // Query the rounds of the previous game, order by round number descending, limit to 1 to get the last round
-          const prevRoundsQuery = query(previousGameRoundsRef, orderBy('roundNumber', 'desc'), limit(1));
-          const prevRoundsSnapshot = await getDocs(prevRoundsQuery);
+        if (previousSlotId) {
+          const previousSlotGamesRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${previousSlotId}/games`);
+          // Query the games of the previous slot, order by game number descending, limit to 1 to get the last game
+          const prevGamesQuery = query(previousSlotGamesRef, orderBy('gameNumber', 'desc'), limit(1));
+          const prevGamesSnapshot = await getDocs(prevGamesQuery);
 
-          if (!prevRoundsSnapshot.empty) {
-            const lastRoundOfPrevGame = prevRoundsSnapshot.docs[0].data();
-            // Only use players from a round that was actually completed
-            if (lastRoundOfPrevGame.endedAt) {
-              defaultPlayersFromPreviousGame = lastRoundOfPrevGame.players.map(p => ({ name: p.name, score: 0 }));
-              console.log(`Defaulting players from last round of previous game (${previousGameId}).`);
+          if (!prevGamesSnapshot.empty) {
+            const lastGameOfPrevSlot = prevGamesSnapshot.docs[0].data();
+            // Only use players from a game that was actually completed
+            if (lastGameOfPrevSlot.endedAt) {
+              defaultPlayersFromPreviousSlot = lastGameOfPrevSlot.players.map(p => ({ name: p.name, score: 0 }));
+              console.log(`Defaulting players from last game of previous slot (${previousSlotId}).`);
             }
           }
         }
-        
-        // If players were found from a previous game's last round, use them.
-        if (defaultPlayersFromPreviousGame.length > 0) {
-            playersForNextRound = defaultPlayersFromPreviousGame;
+
+        // If players were found from a previous slot's last game, use them.
+        if (defaultPlayersFromPreviousSlot.length > 0) {
+            playersForNextGame = defaultPlayersFromPreviousSlot;
         } else {
-            // Fallback: If no previous game's last round, or no completed rounds there,
-            // then no players are pre-selected by default.
-            playersForNextRound = []; // Explicitly set to empty if no defaults found
-            console.log("No previous round players found to default. Starting with empty selection.");
+          // Fallback: If no previous slot's last game, or no completed games there,
+          // then no players are pre-selected by default.
+          playersForNextGame = []; // Explicitly set to empty if no defaults found
+          console.log("No previous game players found to default. Starting with empty selection.");
         }
       }
 
-      // IMPORTANT: Filter the `playersForNextRound` against the `masterPlayerList`
+      // IMPORTANT: Filter the `playersForNextGame` against the `masterPlayerList`
       // This ensures that only players currently existing in the master list are pre-selected.
       const masterPlayerNames = new Set(masterPlayerList.map(p => p.name));
-      const filteredPlayersForNextRound = playersForNextRound.filter(player => 
+      const filteredPlayersForNextGame = playersForNextGame.filter(player =>
         masterPlayerNames.has(player.name)
       );
 
-      setCurrentRoundPlayers(filteredPlayersForNextRound);
+      setCurrentGamePlayers(filteredPlayersForNextGame);
 
     }, (error) => {
-      console.error("Error fetching rounds:", error);
-      displayMessage(`Error fetching rounds: ${error.message}`);
+      console.error("Error fetching games:", error);
+      displayMessage(`Error fetching games: ${error.message}`);
     });
 
     // Clean up the listener
     return () => unsubscribe();
-  }, [db, user, appId, userId, selectedGame, masterPlayerList]); // masterPlayerList is a dependency now
+  }, [db, user, appId, userId, selectedSlot, masterPlayerList]);
 
-  // Handles creation of a new game
-  const handleCreateNewGame = async () => {
+  // Handles creation of a new slot
+  const handleCreateNewSlot = async () => {
     if (!db || !user || !appId || !userId) {
       displayMessage("Database not ready or user not signed in.");
       return;
     }
 
     try {
-      const userGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/games`);
+      const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
 
       const today = new Date();
       const year = today.getFullYear();
@@ -259,126 +256,124 @@ function App() {
       const day = String(today.getDate()).padStart(2, '0');
       const dateString = `${year}-${month}-${day}`;
 
-      // Query to find existing games for today to determine the next game ID
+      // Query to find existing slots for today to determine the next slot ID
       const q = query(
-        userGamesCollectionRef,
+        userSlotsCollectionRef,
         where('date', '==', dateString),
-        orderBy('gameId', 'desc')
+        orderBy('slotId', 'desc')
       );
 
       const querySnapshot = await getDocs(q);
-      let nextGameId = 1;
+      let nextSlotId = 1;
 
       if (!querySnapshot.empty) {
-        const latestGame = querySnapshot.docs[0].data();
-        nextGameId = latestGame.gameId + 1;
+        const latestSlot = querySnapshot.docs[0].data();
+        nextSlotId = latestSlot.slotId + 1;
       }
 
-      // Add the new game document to Firestore
-      const newGameDoc = await addDoc(userGamesCollectionRef, {
-        gameId: nextGameId,
+      // Add the new slot document to Firestore
+      const newSlotDoc = await addDoc(userSlotsCollectionRef, {
+        slotId: nextSlotId,
         date: dateString,
         createdAt: Date.now(),
         userName: user.displayName || user.email || 'Anonymous',
       });
-      displayMessage(`New game created successfully with ID: ${nextGameId} for ${dateString}!`);
-      // Select the newly created game
-      setSelectedGame({ id: newGameDoc.id, gameId: nextGameId, date: dateString, createdAt: Date.now(), userName: user.displayName || user.email || 'Anonymous' });
+      displayMessage(`New slot created successfully with ID: ${nextSlotId} for ${dateString}!`);
+      // Select the newly created slot
+      setSelectedSlot({ id: newSlotDoc.id, slotId: nextSlotId, date: dateString, createdAt: Date.now(), userName: user.displayName || user.email || 'Anonymous' });
+    } catch (error) {
+      console.error("Error creating new slot:", error);
+      displayMessage(`Error creating new slot: ${error.message}`);
+    }
+  };
+
+  // Handles selection of an existing slot
+  const handleSelectSlot = (slot) => {
+    setSelectedSlot(slot);
+    setGames([]); // Clear games when a new slot is selected
+    displayMessage(`Slot ${slot.slotId} (${slot.date}) selected.`);
+  };
+
+  // Handles creation of a new game for the selected slot
+  const handleCreateNewGame = async () => {
+    if (!db || !user || !appId || !userId || !selectedSlot) {
+      displayMessage("Please select a slot to create a new game.");
+      return;
+    }
+    // Ensure players are selected for the new game
+    if (currentGamePlayers.length === 0) {
+      displayMessage("Please select players for the game before creating it.");
+      return;
+    }
+    if (currentGamePlayers.length < 2) {
+      displayMessage("A game requires at least two players.");
+      return;
+    }
+    // Prevent creating a new game if an existing one is active
+    const isGameActive = games.length > 0 && !games[0].endedAt;
+    if (isGameActive) {
+      displayMessage("The current game is not yet ended. Please end it before creating a new one.");
+      return;
+    }
+
+    try {
+      const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
+      let nextGameNumber = 1;
+      if (games.length > 0) {
+        nextGameNumber = games[0].gameNumber + 1;
+      }
+
+      // Prepare players for the new game, initializing their scores to 0
+      const playersForNewGame = currentGamePlayers.map(player => ({
+        name: player.name,
+        score: 0
+      }));
+
+      // Add the new game document to Firestore
+      await addDoc(slotGamesCollectionRef, {
+        gameNumber: nextGameNumber,
+        createdAt: Date.now(),
+        players: playersForNewGame,
+        winnerPlayerName: null,
+        pointsTransferred: 0,
+        endedAt: null,
+      });
+
+      displayMessage(`New game ${nextGameNumber} created for Slot ${selectedSlot.slotId}.`);
     } catch (error) {
       console.error("Error creating new game:", error);
       displayMessage(`Error creating new game: ${error.message}`);
     }
   };
 
-  // Handles selection of an existing game
-  const handleSelectGame = (game) => {
-    setSelectedGame(game);
-    setRounds([]); // Clear rounds when a new game is selected
-    displayMessage(`Game ${game.gameId} (${game.date}) selected.`);
-  };
-
-  // Handles creation of a new round for the selected game
-  const handleCreateNewRound = async () => {
-    if (!db || !user || !appId || !userId || !selectedGame) {
-      displayMessage("Please select a game to create a new round.");
+  // New function to handle cancelling/deleting the active game
+  const handleCancelGame = async () => {
+    if (!db || !user || !appId || !userId || !selectedSlot) {
+      displayMessage("Database not ready, user not signed in, or no slot selected.");
       return;
     }
-    // Ensure players are selected for the new round
-    if (currentRoundPlayers.length === 0) {
-      displayMessage("Please select players for the round before creating it.");
-      return;
-    }
-    if (currentRoundPlayers.length < 2) {
-      displayMessage("A round requires at least two players.");
-      return;
-    }
-    // Prevent creating a new round if an existing one is active
-    const isRoundActive = rounds.length > 0 && !rounds[0].endedAt;
-    if (isRoundActive) {
-      displayMessage("The current round is not yet ended. Please end it before creating a new one.");
+    // Check if there's an active game to cancel
+    if (games.length === 0 || games[0].endedAt) {
+      displayMessage("No active game to cancel.");
       return;
     }
 
-    try {
-      const gameRoundsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/games/${selectedGame.id}/rounds`);
+    const activeGameId = games[0].id;
+    const activeGameNumber = games[0].gameNumber;
 
-      let nextRoundNumber = 1;
-      if (rounds.length > 0) {
-        nextRoundNumber = rounds[0].roundNumber + 1;
-      }
-
-      // Prepare players for the new round, initializing their scores to 0
-      const playersForNewRound = currentRoundPlayers.map(player => ({
-        name: player.name,
-        score: 0
-      }));
-
-      // Add the new round document to Firestore
-      await addDoc(gameRoundsCollectionRef, {
-        roundNumber: nextRoundNumber,
-        createdAt: Date.now(),
-        players: playersForNewRound,
-        winnerPlayerName: null,
-        pointsTransferred: 0,
-        endedAt: null,
-      });
-
-      displayMessage(`New round ${nextRoundNumber} created for Game ${selectedGame.gameId}.`);
-    } catch (error) {
-      console.error("Error creating new round:", error);
-      displayMessage(`Error creating new round: ${error.message}`);
-    }
-  };
-
-  // New function to handle cancelling/deleting the active round
-  const handleCancelRound = async () => {
-    if (!db || !user || !appId || !userId || !selectedGame) {
-      displayMessage("Database not ready, user not signed in, or no game selected.");
-      return;
-    }
-    // Check if there's an active round to cancel
-    if (rounds.length === 0 || rounds[0].endedAt) {
-      displayMessage("No active round to cancel.");
-      return;
-    }
-
-    const activeRoundId = rounds[0].id;
-    const activeRoundNumber = rounds[0].roundNumber;
-
-    if (window.confirm(`Are you sure you want to cancel Round ${activeRoundNumber}? This action cannot be undone.`)) {
+    if (window.confirm(`Are you sure you want to cancel Game ${activeGameNumber}? This action cannot be undone.`)) {
       try {
-        const roundDocRef = doc(db, `artifacts/${appId}/users/${userId}/games/${selectedGame.id}/rounds`, activeRoundId);
-        await deleteDoc(roundDocRef);
-        displayMessage(`Round ${activeRoundNumber} cancelled successfully.`);
-        // After cancellation, the useEffect for rounds will re-run and update the state
-        // currentRoundPlayers will then default to empty or previous game's players.
+        const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeGameId);
+        await deleteDoc(gameDocRef);
+        displayMessage(`Game ${activeGameNumber} cancelled successfully.`);
+        // After cancellation, the useEffect for games will re-run and update the state
+        // currentGamePlayers will then default to empty or previous slot's players.
       } catch (error) {
-        console.error("Error cancelling round:", error);
-        displayMessage(`Error cancelling round: ${error.message}`);
+        console.error("Error cancelling game:", error);
+        displayMessage(`Error cancelling game: ${error.message}`);
       }
     }
   };
-
 
   // Handles adding a player to the master player list in Firestore
   const handleAddPlayerToMasterList = async (playerName) => {
@@ -419,10 +414,10 @@ function App() {
       displayMessage("Database not ready or user not signed in.");
       return;
     }
-    // Prevent removal if the player is part of an active round
-    const isRoundActive = rounds.length > 0 && !rounds[0].endedAt;
-    if (isRoundActive && currentRoundPlayers.some(p => p.name === playerName)) {
-      displayMessage("Cannot remove a player from the master list if they are part of the active round. End the round first.");
+    // Prevent removal if the player is part of an active game
+    const isGameActive = games.length > 0 && !games[0].endedAt;
+    if (isGameActive && currentGamePlayers.some(p => p.name === playerName)) {
+      displayMessage("Cannot remove a player from the master list if they are part of the active game. End the game first.");
       return;
     }
 
@@ -439,44 +434,44 @@ function App() {
     }
   };
 
-  // Toggles a player's selection for the *next* round to be created
-  const onTogglePlayerForNextRound = (playerName) => {
-    const isPlayerSelected = currentRoundPlayers.some(p => p.name === playerName);
+  // Toggles a player's selection for the *next* game to be created
+  const onTogglePlayerForNextGame = (playerName) => {
+    const isPlayerSelected = currentGamePlayers.some(p => p.name === playerName);
 
     if (isPlayerSelected) {
-      // Remove player if already selected for the next round
-      setCurrentRoundPlayers(currentRoundPlayers.filter(p => p.name !== playerName));
-      displayMessage(`${playerName} removed from next round selection.`);
+      // Remove player if already selected for the next game
+      setCurrentGamePlayers(currentGamePlayers.filter(p => p.name !== playerName));
+      displayMessage(`${playerName} removed from next game selection.`);
     } else {
-      // Add player if not selected for the next round
+      // Add player if not selected for the next game
       const playerToAdd = masterPlayerList.find(p => p.name === playerName);
       if (playerToAdd) {
-        setCurrentRoundPlayers([...currentRoundPlayers, { name: playerToAdd.name, score: 0 }]);
-        displayMessage(`${playerName} added to next round selection.`);
+        setCurrentGamePlayers([...currentGamePlayers, { name: playerToAdd.name, score: 0 }]);
+        displayMessage(`${playerName} added to next game selection.`);
       }
     }
   };
 
-  // Handles updating a player's score within the active round
+  // Handles updating a player's score within the active game
   const handleUpdatePlayerScore = (playerName, scoreValue) => {
-    const updatedPlayers = currentRoundPlayers.map(player =>
+    const updatedPlayers = currentGamePlayers.map(player =>
       player.name === playerName ? { ...player, score: parseInt(scoreValue) || 0 } : player
     );
-    setCurrentRoundPlayers(updatedPlayers);
+    setCurrentGamePlayers(updatedPlayers);
   };
 
-  // Handles ending the current active round
-  const handleEndRound = async () => {
-    if (!selectedGame || rounds.length === 0 || rounds[0].endedAt) {
-      displayMessage("No active round to end. Create a new round first.");
+  // Handles ending the current active game
+  const handleEndGame = async () => {
+    if (!selectedSlot || games.length === 0 || games[0].endedAt) {
+      displayMessage("No active game to end. Create a new game first.");
       return;
     }
-    if (currentRoundPlayers.length < 2) {
-      displayMessage("Need at least two players to end a round.");
+    if (currentGamePlayers.length < 2) {
+      displayMessage("Need at least two players to end a game.");
       return;
     }
 
-    const zeroScorePlayers = currentRoundPlayers.filter(p => p.score === 0);
+    const zeroScorePlayers = currentGamePlayers.filter(p => p.score === 0);
     let winnerPlayer = null;
 
     if (zeroScorePlayers.length === 0) {
@@ -493,7 +488,7 @@ function App() {
     }
 
     let totalPointsFromLosers = 0;
-    const finalPlayersScores = currentRoundPlayers.map(player => {
+    const finalPlayersScores = currentGamePlayers.map(player => {
       if (player.name === winnerPlayer.name) {
         return { name: player.name, score: 0 }; // Winner's score is 0 initially, will be updated to totalPointsFromLosers
       } else {
@@ -509,30 +504,30 @@ function App() {
       finalPlayersScores[winnerIndex].score = totalPointsFromLosers;
     }
 
-    // Final validation: sum of all scores in the round should be zero
+    // Final validation: sum of all scores in the game should be zero
     const finalSum = finalPlayersScores.reduce((sum, p) => sum + p.score, 0);
     if (finalSum !== 0) {
-      console.error("Validation failed: Calculated total points for the round is not zero.", finalPlayersScores);
-      displayMessage("Error: Calculated total points for the round is not zero. Please check scores.");
+      console.error("Validation failed: Calculated total points for the game is not zero.", finalPlayersScores);
+      displayMessage("Error: Calculated total points for the game is not zero. Please check scores.");
       return;
     }
 
-    const currentRoundDocId = rounds[0].id;
+    const currentGameDocId = games[0].id;
 
     try {
-      // Update the active round document in Firestore
-      const roundDocRef = doc(db, `artifacts/${appId}/users/${userId}/games/${selectedGame.id}/rounds`, currentRoundDocId);
-      await updateDoc(roundDocRef, {
+      // Update the active game document in Firestore
+      const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, currentGameDocId);
+      await updateDoc(gameDocRef, {
         players: finalPlayersScores,
         winnerPlayerName: winnerPlayer.name,
         pointsTransferred: totalPointsFromLosers,
-        endedAt: Date.now(), // Mark the round as ended
+        endedAt: Date.now(), // Mark the game as ended
       });
 
-      displayMessage(`Round ${rounds[0].roundNumber} ended! ${winnerPlayer.name} won ${totalPointsFromLosers} points!`);
+      displayMessage(`Game ${games[0].gameNumber} ended! ${winnerPlayer.name} won ${totalPointsFromLosers} points!`);
     } catch (error) {
-      console.error("Error ending round:", error);
-      displayMessage(`Error ending round: ${error.message}`);
+      console.error("Error ending game:", error);
+      displayMessage(`Error ending game: ${error.message}`);
     }
   };
 
@@ -554,47 +549,48 @@ function App() {
           {/* Global Player Management Button - available when user is logged in */}
           <button
             onClick={() => setShowPlayerManager(true)}
-            className="w-full px-6 py-3 mb-6 bg-purple-700 hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105"
-            // Disable if a round is active in a selected game, as player roster for active round is fixed
-            disabled={selectedGame && rounds.length > 0 && !rounds[0].endedAt}
+            // MODIFIED: Reduced scale and added translate-y
+            className="w-full px-6 py-3 mb-6 bg-purple-700 hover:bg-purple-800 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-102 hover:-translate-y-0.5"
+            // Disable if a game is active in a selected slot, as player roster for active game is fixed
+            disabled={selectedSlot && games.length > 0 && !games[0].endedAt}
           >
-            {selectedGame && rounds.length > 0 && !rounds[0].endedAt ? "End Current Round to Manage Players" : "Manage Your Player Roster"}
+            {selectedSlot && games.length > 0 && !games[0].endedAt ? "End Current Game to Manage Players" : "Manage Your Player Roster"}
           </button>
 
-          {/* Game Management Section */}
+          {/* Slot Management Section */}
           <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Your Games</h2>
-            {selectedGame && (
+            <h2 className="text-2xl font-bold text-white mb-4">Your Slots</h2>
+            {selectedSlot && (
             <div className="mt-8 pt-8 border-t border-gray-400">
               <h2 className="text-2xl font-bold text-white mb-4">
-                Active Game: {selectedGame.gameId} ({selectedGame.date})
+                Active Slot: {selectedSlot.slotId} ({selectedSlot.date})
               </h2>
 
-              <RoundInput
-                currentRoundPlayers={currentRoundPlayers} // Players for active round or selected for next
+              <GameInput
+                currentGamePlayers={currentGamePlayers} // Players for active game or selected for next
                 handleUpdatePlayerScore={handleUpdatePlayerScore}
-                handleEndRound={handleEndRound}
-                handleCreateNewRound={handleCreateNewRound}
-                handleCancelRound={handleCancelRound} 
-                rounds={rounds}
-                masterPlayerList={masterPlayerList} // Pass the full master list for selection
-                onTogglePlayerForNextRound={onTogglePlayerForNextRound} // Function to select/deselect players for next round
+                handleEndGame={handleEndGame}
+                handleCreateNewGame={handleCreateNewGame}
+                handleCancelGame={handleCancelGame}
+                games={games}
+                masterPlayerList={masterPlayerList}
+                onTogglePlayerForNextGame={onTogglePlayerForNextGame} // Function to select/deselect players for next game
               />
 
-              <RoundList rounds={rounds} />
+              <GameList games={games} />
             </div>
           )}
-            <GameList
-              games={games}
-              selectedGame={selectedGame}
-              handleCreateNewGame={handleCreateNewGame}
-              handleSelectGame={handleSelectGame}
+            <SlotList
+              slots={slots}
+              selectedSlot={selectedSlot}
+              handleCreateNewSlot={handleCreateNewSlot}
+              handleSelectSlot={handleSelectSlot}
             />
           </div>
         </div>
       ) : (
         <div className="text-center p-8 bg-white bg-opacity-10 backdrop-blur-sm rounded-xl shadow-lg">
-          <p className="text-xl text-white mb-6">Please sign in with your Google account to manage your game scores.</p>
+          <p className="text-xl text-white mb-6">Please sign in with your Google account to manage your slot scores.</p>
         </div>
       )}
 
