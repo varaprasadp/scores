@@ -1,4 +1,4 @@
-// src/components/PlayerManager.jsx
+// src/components/PlayerManager.js
 import React, { useState } from 'react';
 
 function PlayerManager({ masterPlayerList, onAddPlayer, onRemovePlayer, onClose }) {
@@ -13,62 +13,68 @@ function PlayerManager({ masterPlayerList, onAddPlayer, onRemovePlayer, onClose 
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
-      {/* Changed background to be consistent with the main app's semi-transparent, blurred look */}
-      <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-xl p-6 shadow-2xl w-full max-w-md relative text-gray-100">
+    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[100] p-3 backdrop-blur-sm">
+      <div className="bg-gray-800 rounded-lg p-4 sm:p-5 shadow-xl w-full max-w-md text-gray-200 relative border-t-4 border-purple-600">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-300 hover:text-white text-2xl font-bold transition duration-200"
+          className="absolute top-3 right-3 text-gray-500 hover:text-gray-100 text-3xl leading-none p-1 transition-colors"
+          aria-label="Close player manager"
         >
           &times;
         </button>
-        <h2 className="text-2xl font-bold mb-6 text-center text-white">Manage Players</h2>
+        <h2 className="text-lg sm:text-xl font-semibold mb-4 text-center text-white border-b border-gray-700 pb-3">
+          Manage Player Roster
+        </h2>
 
-        {/* Add New Player Form */}
-        <form onSubmit={handleAddSubmit} className="mb-6 flex gap-2">
+        <form onSubmit={handleAddSubmit} className="mb-5 flex flex-col sm:flex-row gap-2">
           <input
             type="text"
             value={newPlayerName}
             onChange={(e) => setNewPlayerName(e.target.value)}
-            placeholder="Add new player name"
-            // Input style updated for consistency
-            className="flex-grow p-3 rounded-lg bg-white bg-opacity-20 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-transparent transition duration-200"
+            placeholder="Enter new player name"
+            className="flex-grow p-2.5 rounded-md bg-gray-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+            aria-label="New player name input"
           />
           <button
             type="submit"
-            // MODIFIED: Reduced scale and added translate-y
-            className="px-5 py-3 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-102 hover:-translate-y-0.5"
+            className="px-4 py-2.5 text-sm bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-md shadow-md transition-colors"
           >
-            Add
+            Add Player
           </button>
         </form>
 
-        {/* Master Player List */}
-        <h3 className="text-lg font-semibold mb-3 text-white">Your Players:</h3>
+        <h3 className="text-sm sm:text-base font-medium mb-2 text-gray-300">Your Roster:</h3>
         {masterPlayerList.length === 0 ? (
-          <p className="text-gray-300 text-center">No players in your master list yet.</p>
+          <p className="text-gray-400 text-center text-xs sm:text-sm py-3">No players added yet. Use the form above!</p>
         ) : (
-          <ul className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+          <ul className="space-y-2 max-h-52 sm:max-h-60 overflow-y-auto pr-1 custom-scrollbar-thin">
             {masterPlayerList.map(player => (
               <li key={player.id}
-                  // List item background updated for consistency
-                  className="flex items-center justify-between bg-white bg-opacity-15 p-3 rounded-lg shadow-sm"
+                  className="flex items-center justify-between bg-gray-700 bg-opacity-70 p-2.5 rounded-md hover:bg-opacity-90 transition-colors"
               >
-                <span className="font-medium text-white">{player.name}</span>
+                <span className="font-normal text-gray-100 text-sm" title={player.name}>{player.name}</span>
                 <button
                   onClick={() => onRemovePlayer(player.id, player.name)}
-                  // MODIFIED: Reduced scale and added translate-y
-                  className="p-2 text-red-300 hover:text-red-500 transition duration-200 rounded-full hover:bg-white hover:bg-opacity-10 transform hover:scale-102 hover:-translate-y-0.5"
+                  className="p-1.5 text-red-400 hover:text-red-300 transition-colors rounded-full hover:bg-gray-600"
                   title={`Remove ${player.name}`}
+                  aria-label={`Remove ${player.name}`}
                 >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1z" clipRule="evenodd" />
+                  <svg className="w-4 h-4 sm:w-4.5 sm:h-4.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1z" clipRule="evenodd"></path>
                   </svg>
                 </button>
               </li>
             ))}
           </ul>
         )}
+         <div className="mt-5 pt-3 border-t border-gray-700 text-right">
+            <button
+                onClick={onClose}
+                className="px-5 py-2.5 bg-gray-600 hover:bg-gray-500 text-white font-medium rounded-md shadow-md text-sm transition-colors"
+            >
+                Done
+            </button>
+        </div>
       </div>
     </div>
   );
