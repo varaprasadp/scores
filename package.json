@@ -2,7 +2,7 @@
   "name": "scores",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://varaprasadp.github.io/scores"
+  "homepage": "https://varaprasadp.github.io/scores",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
