@@ -5,42 +5,69 @@ function GameInput({
   currentGamePlayers,
   handleUpdatePlayerScore,
   handleEndGame,
-  handleCreateNewGame,
+  handleStartLocalGame, // Renamed from handleCreateNewGame
   handleCancelGame,
-  games,
+  games, // DB games
   masterPlayerList,
   onTogglePlayerForNextGame,
-  onToggleRotationForCurrentGame
+  onToggleRotationForCurrentGame,
+  pendingGame, // New prop: { gameNumber, createdAt, isRotationGame, isLocallyActive }
+  activeFirestoreGameId // New prop: ID of an active game from Firestore, if any
 }) {
-  const isGameActive = games.length > 0 && !games[0].endedAt;
-  const activeGame = isGameActive ? games[0] : null;
-  const isCurrentGameRotation = activeGame ? !!activeGame.isRotationGame : false;
+  const isLocalGameActive = !!pendingGame?.isLocallyActive;
+  const firestoreActiveGame = games.find(g => !g.endedAt && g.id === activeFirestoreGameId);
+  const isGameEffectivelyActive = isLocalGameActive || !!firestoreActiveGame;
 
-  const playersInActiveGame = isGameActive ? currentGamePlayers : [];
+  // Determine the game object to use for display and logic (local takes precedence)
+  let gameForUI;
+  if (isLocalGameActive) {
+    gameForUI = {
+      id: 'local', // Special ID for local game
+      gameNumber: pendingGame.gameNumber,
+      isRotationGame: pendingGame.isRotationGame,
+      // players are from currentGamePlayers prop
+    };
+  } else if (firestoreActiveGame) {
+    gameForUI = firestoreActiveGame;
+  }
+
+  const isCurrentUIGameRotation = gameForUI ? !!gameForUI.isRotationGame : false;
   
-  // Determine if winner's input should be disabled
-  const nonZeroScoreEnteredCount = playersInActiveGame.filter(p => p.score !== 0).length;
-  const canIdentifyWinnerForInputDisable = playersInActiveGame.length > 1 && nonZeroScoreEnteredCount === playersInActiveGame.length - 1;
+  // Player and score logic primarily uses currentGamePlayers prop which App.js manages
+  const playersInCurrentInteraction = currentGamePlayers;
 
-  // Valid condition to end game: at least 2 players, exactly one winner (score 0), all others have non-zero scores.
-  const potentialWinners = playersInActiveGame.filter(p => p.score === 0);
-  const canEndGame = playersInActiveGame.length >= 2 && 
+  const nonZeroScoreEnteredCount = playersInCurrentInteraction.filter(p => p.score !== 0).length;
+  const canIdentifyWinnerForInputDisable = playersInCurrentInteraction.length > 1 && nonZeroScoreEnteredCount === playersInCurrentInteraction.length - 1;
+  
+  const potentialWinners = playersInCurrentInteraction.filter(p => p.score === 0);
+  const canEndGame = isGameEffectivelyActive && // Must be an active game (local or DB)
+                     playersInCurrentInteraction.length >= 2 && 
                      potentialWinners.length === 1 &&
-                     nonZeroScoreEnteredCount === (playersInActiveGame.length - 1);
+                     nonZeroScoreEnteredCount === (playersInCurrentInteraction.length - 1);
+
+  // Determine game number for "Setup New Game" title
+  let nextGameNumberDisplay = 1;
+  if (games.length > 0) {
+    nextGameNumberDisplay = games.reduce((max, g) => Math.max(max, g.gameNumber), 0) + 1;
+  }
+
 
   return (
     <div className="bg-gray-800 bg-opacity-70 rounded-lg p-3 sm:p-4 shadow-md mb-4">
       <h3 className="text-lg sm:text-xl font-semibold text-white mb-3">
-        {isGameActive && activeGame ? `Game ${activeGame.gameNumber} - Active` : 'Setup New Game'}
+        {isGameEffectivelyActive && gameForUI 
+          ? `Game ${gameForUI.gameNumber}` 
+          : `Setup New Game ${nextGameNumberDisplay}`}
       </h3>
 
-      {isGameActive && activeGame ? (
+      {isGameEffectivelyActive && gameForUI ? (
+        // Active Game UI (Local or DB)
         <>
           <p className="text-xs sm:text-sm text-gray-300 mb-2">
             Enter points lost by each player. Winner must have 0 points.
           </p>
           <div className="space-y-2 sm:space-y-3 mb-3">
-            {playersInActiveGame.map((player) => {
+            {playersInCurrentInteraction.map((player) => {
               const isDesignatedWinnerForInput = canIdentifyWinnerForInputDisable && player.score === 0;
               const isLikelyWinnerForHighlight = player.score === 0 && canEndGame && potentialWinners[0]?.name === player.name;
               return (
@@ -53,10 +80,9 @@ function GameInput({
                     type="number"
                     pattern="\d*" 
                     inputMode="numeric"
-                    value={player.score.toString()}
+                    value={player.score.toString()} // Scores come from currentGamePlayers
                     onChange={(e) => {
                       const value = e.target.value;
-                      // Allow empty string to be treated as 0 for intermediate input
                       handleUpdatePlayerScore(player.name, value === '' ? 0 : parseInt(value, 10));
                     }}
                     disabled={isDesignatedWinnerForInput}
@@ -69,12 +95,11 @@ function GameInput({
               );
             })}
           </div>
-
           <div className="flex items-center mt-3 mb-4">
             <input
               type="checkbox"
               id="isRotationGame"
-              checked={isCurrentGameRotation}
+              checked={isCurrentUIGameRotation}
               onChange={(e) => onToggleRotationForCurrentGame(e.target.checked)}
               className="form-checkbox h-4 w-4 text-purple-600 rounded bg-gray-600 border-gray-500 cursor-pointer focus:ring-purple-500 focus:ring-offset-gray-800"
             />
@@ -89,7 +114,7 @@ function GameInput({
               className="w-full sm:flex-1 px-3 py-2.5 text-sm bg-yellow-500 hover:bg-yellow-600 text-black font-semibold rounded-md shadow-md transition-transform hover:scale-105 disabled:opacity-50 disabled:hover:scale-100 disabled:bg-yellow-700 disabled:text-gray-700"
               disabled={!canEndGame}
             >
-              End Game {activeGame.gameNumber}
+              End Game {gameForUI.gameNumber}
             </button>
             <button
               onClick={handleCancelGame}
@@ -100,19 +125,21 @@ function GameInput({
           </div>
         </>
       ) : (
+        // Setup New Game UI
         <>
           <p className="text-xs sm:text-sm text-gray-300 mb-2">
-            Select players for Game {games.length > 0 && games[0]?.endedAt ? `${(games[0]?.gameNumber || 0) + 1}` : games.length === 0 ? '1' : `${(games[0]?.gameNumber || 0) + 1}`}:
+            Select players for Game {nextGameNumberDisplay}:
           </p>
 
           {masterPlayerList.length === 0 ? (
-            <p className="text-yellow-400 text-xs text-center py-2">
+             <p className="text-yellow-400 text-xs text-center py-2">
               Add players via "Manage Roster" first.
             </p>
           ) : (
             <div className="grid grid-cols-2 xs:grid-cols-3 gap-2 mb-3">
               {masterPlayerList.map(masterPlayer => {
-                const isSelected = currentGamePlayers.some(p => p.name === masterPlayer.name);
+                // currentGamePlayers represents the selected players for the new game setup
+                const isSelected = playersInCurrentInteraction.some(p => p.name === masterPlayer.name);
                 return (
                   <button
                     key={masterPlayer.id}
@@ -136,24 +163,21 @@ function GameInput({
               })}
             </div>
           )}
-
-          {currentGamePlayers.length > 0 && (
+          {playersInCurrentInteraction.length > 0 && (
             <div className="text-gray-400 text-xs mb-3 break-words">
-              <span className="font-semibold text-gray-300">Selected:</span> {currentGamePlayers.map(p => p.name).join(', ')}
+              <span className="font-semibold text-gray-300">Selected:</span> {playersInCurrentInteraction.map(p => p.name).join(', ')}
             </div>
           )}
-
           <button
-            onClick={handleCreateNewGame}
+            onClick={handleStartLocalGame} // Use the new handler
             className="w-full px-3 py-2.5 text-sm bg-green-600 hover:bg-green-700 text-white font-semibold rounded-md shadow-md transition-transform hover:scale-105 disabled:bg-gray-500 disabled:text-gray-300 disabled:cursor-not-allowed disabled:hover:scale-100"
-            disabled={currentGamePlayers.length < 2 || masterPlayerList.length === 0}
+            disabled={playersInCurrentInteraction.length < 2 || masterPlayerList.length === 0 || isGameEffectivelyActive /* Cannot start if a game is already active */}
           >
-            Create New Game
+            Start New Game
           </button>
         </>
       )}
     </div>
   );
 }
-
 export default GameInput;
