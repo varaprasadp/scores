@@ -1,4 +1,3 @@
-// src/components/Header.js
 import React from 'react';
 
 function Header({ children }) {
@@ -7,8 +6,8 @@ function Header({ children }) {
       <h1 className="text-xl sm:text-2xl font-bold text-white mb-2 sm:mb-0 text-center sm:text-left">
         Score Tracker 🎯
       </h1>
-      <div className="w-full sm:w-auto">
-        {children} 
+      <div className="w-full sm:w-auto flex justify-center sm:justify-end">
+        {children}
       </div>
     </header>
   );

@@ -1,12 +1,9 @@
-// src/components/FirebaseProvider.js
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
-import FirebaseContext from '../contexts/FirebaseContext'; // Import the context
+import FirebaseContext from '../contexts/FirebaseContext';
 
-// Define your Firebase config
-// IMPORTANT: Make sure these environment variables are correctly loaded in your build process
 const firebaseConfig = {
     apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
     authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
@@ -21,111 +18,73 @@ function FirebaseProvider({ children }) {
     const [user, setUser] = useState(null);
     const [db, setDb] = useState(null);
     const [auth, setAuth] = useState(null);
-    const [loading, setLoading] = useState(true); // Start in loading state
+    const [loading, setLoading] = useState(true);
     const [currentAppId, setCurrentAppId] = useState(null);
     const [currentUserId, setCurrentUserId] = useState(null);
 
     useEffect(() => {
-        let unsubscribeAuth = () => { }; // Placeholder for the auth listener unsubscribe function
+        let unsubscribeAuth = () => {};
 
         try {
-            console.log("Attempting Firebase Initialization with Config:", firebaseConfig);
-
-            // Check if crucial config values are present
-            if (!firebaseConfig.apiKey) {
-                console.error("FATAL ERROR: REACT_APP_FIREBASE_API_KEY is not defined!");
-                setLoading(false); // Stop loading if config is missing
-                return; // Stop initialization
-            }
-            if (!firebaseConfig.appId) {
-                console.error("FATAL ERROR: REACT_APP_FIREBASE_APP_ID is not defined!");
-                setLoading(false); // Stop loading if config is missing
-                return; // Stop initialization
+            // console.log("Attempting Firebase Initialization with Config:", firebaseConfig);
+            if (!firebaseConfig.apiKey || !firebaseConfig.projectId || !firebaseConfig.appId) { // Added projectId check
+                console.error("FATAL ERROR: Missing critical Firebase config values (apiKey, projectId, or appId).");
+                setLoading(false);
+                return;
             }
 
-            // Initialize Firebase app
             const app = initializeApp(firebaseConfig);
-            console.log("Firebase App initialized successfully:", app);
-
             const firestoreDb = getFirestore(app);
-            console.log("Firestore initialized:", firestoreDb);
-
             const firebaseAuth = getAuth(app);
-            console.log("Firebase Auth initialized:", firebaseAuth);
             
-            // Set the initialized instances to state
             setDb(firestoreDb);
             setAuth(firebaseAuth);
-            console.log("Firebase DB and Auth state variables updated.");
             setCurrentAppId(firebaseConfig.appId);
-            // Set up the auth state listener
-            console.log("Setting up onAuthStateChanged listener...");
+            
             unsubscribeAuth = onAuthStateChanged(firebaseAuth, (currentUser) => {
-                console.log("onAuthStateChanged fired. Current user:", currentUser ? currentUser.uid : "null (signed out)");
-                // Check the loading state value right before potentially setting it to false
-                console.log("Current loading state BEFORE check:", loading);
-
-                setUser(currentUser); // Update user state
-                console.log("User state updated.");
-                setCurrentUserId(currentUser?.uid); 
-
-                // Only set loading to false after the *initial* auth state is determined
-                // This prevents rendering the app before knowing if the user is logged in
-                if (loading) { // Only set false the first time the listener fires
-                    console.log("Setting loading to false NOW."); // Add this log
+                setUser(currentUser);
+                setCurrentUserId(currentUser?.uid || null); // Set to null if no user
+                if (loading) {
                     setLoading(false);
-                    console.log("Loading state should now be false."); // Add this log
-                } else {
-                    console.log("Loading was already false, not setting again."); // Add this log
                 }
-            }, (error) => { // Add error handler for onAuthStateChanged
+            }, (error) => {
                 console.error("Error in onAuthStateChanged listener:", error);
-                // Ensure loading is set to false even if the listener errors out
-                setLoading(false); // Setting false even on error
-                console.log("Error in listener, setting loading to false."); // Add this log
+                setLoading(false);
             });
-
-
 
         } catch (error) {
             console.error("FATAL ERROR: Failed during Firebase initialization process:", error);
-            // Ensure loading is set to false even on initialization failure
             setLoading(false);
-            // Optionally, set an error state here that the provider makes available
         }
 
-        // Cleanup function
         return () => {
-            console.log("FirebaseProvider unmounting, cleaning up auth listener.");
-            unsubscribeAuth(); // Unsubscribe the auth listener
-            // Note: There's typically no need to manually "cleanup" Firebase instances
-            // initialized with initializeApp unless you are explicitly trying to manage
-            // multiple Firebase apps or complex scenarios. Let them live for the app's lifespan.
+            unsubscribeAuth();
         };
-    }, []); // Empty dependency array: runs only once on mount
+    }, [loading]); // Added loading to dependency array to ensure setLoading(false) from onAuthStateChanged takes effect correctly initially
 
-    // The value provided to the context
     const contextValue = {
         auth,
         db,
         user,
         loading,
-        appId: currentAppId, // Provide appId from state
-        userId: currentUserId, // Provide userId from state
+        appId: currentAppId,
+        userId: currentUserId,
     };
 
-    // While loading, you might return a specific loading indicator
-    if (loading) {
-        // You can customize this loading state rendering
+    if (loading && !auth && !db) { // Refined loading condition for initial screen
         return (
-            <div className="min-h-screen flex items-center justify-center bg-gray-100">
-                <div className="text-lg font-semibold text-gray-700">Loading application...</div>
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-gray-100 p-4">
+                <div className="text-xl font-semibold mb-4">Loading Application...</div>
+                {/* Optional: Add a spinner here */}
+                <svg className="animate-spin h-8 w-8 text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {!firebaseConfig.apiKey && <p className="mt-4 text-red-400 text-sm">Firebase API Key seems to be missing.</p>}
             </div>
         );
     }
 
-
-    // Once initialized and auth state is known, provide the context to children
     return (
         <FirebaseContext.Provider value={contextValue}>
             {children}

@@ -1,5 +1,5 @@
-/* src/index.css */
-@import "tailwindcss"; /* Replaces @tailwind base, components, utilities */
+/* Import Tailwind CSS. This line replaces the older @tailwind base, @tailwind components, @tailwind utilities */
+@import "tailwindcss";
 
 body {
   margin: 0;
@@ -8,27 +8,31 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Base background color for the entire app, applied here for consistency */
+  @apply bg-gray-900 text-gray-100;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Custom Scrollbar Styles */
 /* For Webkit-based browsers (Chrome, Safari, Edge Chromium) */
 .custom-scrollbar-thin::-webkit-scrollbar {
   width: 6px;  /* Width of vertical scrollbar */
   height: 6px; /* Height of horizontal scrollbar */
 }
 .custom-scrollbar-thin::-webkit-scrollbar-track {
-  background: #1f2937; /* gray-800 */
+  background: #1f2937; /* Tailwind gray-800 */
   border-radius: 3px;
 }
 .custom-scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #4b5563; /* gray-600 */
+  background: #4b5563; /* Tailwind gray-600 */
   border-radius: 3px;
 }
 .custom-scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background: #6b7280; /* gray-500 */
+  background: #6b7280; /* Tailwind gray-500 */
 }
 
 /* For Firefox (scrollbar-width and scrollbar-color are more limited) */

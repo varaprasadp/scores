@@ -4,7 +4,7 @@ import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { useFirebase } from './contexts/FirebaseContext';
 import {
     addDoc, collection, deleteDoc, doc, onSnapshot,
-    orderBy, query, where, getDocs, limit, updateDoc
+    orderBy, query, where, getDocs, limit, updateDoc, serverTimestamp
 } from 'firebase/firestore';
 
 import Header from './components/Header';
@@ -20,20 +20,21 @@ function App() {
     const { auth, user, db, appId, userId, loading } = useFirebase();
     const [slots, setSlots] = useState([]);
     const [selectedSlot, setSelectedSlot] = useState(null);
-    const [games, setGames] = useState([]); // Games from Firestore
-    const [currentGamePlayers, setCurrentGamePlayers] = useState([]); // Players for the game being interacted with
+    const [games, setGames] = useState([]);
+    const [currentGamePlayers, setCurrentGamePlayers] = useState([]);
     const [message, setMessage] = useState('');
     const [showPlayerManager, setShowPlayerManager] = useState(false);
     const [masterPlayerList, setMasterPlayerList] = useState([]);
 
     const [showCancelGameConfirm, setShowCancelGameConfirm] = useState(false);
-    const [gameToCancelId, setGameToCancelId] = useState(null); // Can be Firestore ID or 'local'
+    const [gameToCancelId, setGameToCancelId] = useState(null);
     const [gameToCancelNumber, setGameToCancelNumber] = useState(null);
 
-    const [pendingGame, setPendingGame] = useState(null); // { gameNumber, createdAt, isRotationGame, isLocallyActive: true }
+    const [pendingGame, setPendingGame] = useState(null); // For a new game not yet saved
+    const [editingGameInfo, setEditingGameInfo] = useState(null); // { id, gameNumber, isRotationGame } for editing
 
-    const activeGameIdInUI = useRef(null); // Primarily for games loaded from Firestore
-    const prevMasterPlayerListRef = useRef(); // To track changes in masterPlayerList for the useEffect
+    const activeGameIdInUI = useRef(null); // Firestore ID of an *active* game being shown in UI
+    const prevMasterPlayerListRef = useRef();
 
     const displayMessage = useCallback((msg) => {
         setMessage(msg);
@@ -41,7 +42,7 @@ function App() {
         return () => clearTimeout(timerId);
     }, []);
 
-    const handleGoogleSignIn = useCallback(async () => {
+    const handleGoogleSignIn = useCallback(async () => {/* ... same ... */
         if (!auth) {
             displayMessage("Authentication service is not available.");
             return;
@@ -56,7 +57,7 @@ function App() {
         }
     }, [auth, displayMessage]);
 
-    const handleSignOut = useCallback(async () => {
+    const handleSignOut = useCallback(async () => { /* ... same ... */
         if (!auth) {
             displayMessage("Authentication service is not available.");
             return;
@@ -69,7 +70,8 @@ function App() {
             setGames([]);
             setCurrentGamePlayers([]);
             setShowPlayerManager(false);
-            setPendingGame(null); // Reset pending game
+            setPendingGame(null);
+            setEditingGameInfo(null); // Reset editing state
             activeGameIdInUI.current = null;
         } catch (error) {
             console.error("Error during sign-out:", error);
@@ -77,7 +79,8 @@ function App() {
         }
     }, [auth, displayMessage]);
 
-    useEffect(() => { // Fetch Slots
+    // Fetch Slots
+    useEffect(() => { /* ... same ... */
         if (loading || !db || !user || !appId || !userId) {
             setSlots([]);
             return;
@@ -93,14 +96,15 @@ function App() {
         return () => unsubscribe();
     }, [db, user, appId, userId, loading, displayMessage]);
 
-    useEffect(() => { // Fetch Master Player List
+    // Fetch Master Player List
+    useEffect(() => { /* ... same ... */
         if (loading || !db || !user || !appId || !userId) {
             setMasterPlayerList([]);
             return;
         }
         const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
         const masterPlayersRef = collection(userDocRef, 'masterPlayers');
-        const q = query(masterPlayersRef, orderBy('createdAt', 'asc'));
+        const q = query(masterPlayersRef, orderBy('name', 'asc')); // Sort by name
         const unsubscribe = onSnapshot(q, (snapshot) => {
             setMasterPlayerList(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
         }, (error) => {
@@ -112,13 +116,13 @@ function App() {
 
     // Fetch Games for Selected Slot & Prepare UI state
     useEffect(() => {
-        if (loading || !db || !user || !appId || !userId || !selectedSlot) {
-            setGames([]);
-            if (!pendingGame) { // Only clear if no local game is in progress
+        // If editing, pending game, or no slot selected, UI is driven by those states, not this effect primarily.
+        if (editingGameInfo || loading || !db || !user || !appId || !userId || !selectedSlot) {
+            if (!editingGameInfo && !pendingGame && !selectedSlot) { // Clear games only if truly nothing is active
+                setGames([]);
                 setCurrentGamePlayers([]);
                 activeGameIdInUI.current = null;
             }
-            // Initialize ref if masterPlayerList is available, or on first run
             prevMasterPlayerListRef.current = masterPlayerList;
             return;
         }
@@ -129,52 +133,44 @@ function App() {
 
         const unsubscribe = onSnapshot(qGames, async (snapshot) => {
             const newGamesFromDB = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
-            setGames(newGamesFromDB); // Update the list of DB games
+            setGames(newGamesFromDB);
 
-            if (pendingGame?.isLocallyActive) {
-                // A local game is active. UI is driven by pendingGame and currentGamePlayers.
-                // Only filter currentGamePlayers if masterPlayerList reference itself has changed.
-                // This prevents score resets if the effect was triggered by pendingGame.isRotationGame changing.
-                if (prevMasterPlayerListRef.current !== masterPlayerList) {
-                    setCurrentGamePlayers(prev => prev.filter(p => masterPlayerNamesSet.has(p.name)));
+            // If editing, pending game is active, or master player list changed, these states take precedence or modify current players.
+            if (editingGameInfo || pendingGame?.isLocallyActive) {
+                if (prevMasterPlayerListRef.current !== masterPlayerList && (editingGameInfo || pendingGame?.isLocallyActive)) {
+                     setCurrentGamePlayers(prev => prev.filter(p => masterPlayerNamesSet.has(p.name)));
                 }
                 activeGameIdInUI.current = null; // No DB game is the focus of input UI
-                return; // Stop further processing for active UI if local game is on.
+                return;
             }
 
-            // No local game is active, determine UI state based on Firestore games.
             const latestGameDataFromDB = newGamesFromDB.length > 0 ? newGamesFromDB[0] : null;
 
-            if (latestGameDataFromDB && !latestGameDataFromDB.endedAt) {
+            if (latestGameDataFromDB && !latestGameDataFromDB.endedAt) { // An active game exists in Firestore
                 activeGameIdInUI.current = latestGameDataFromDB.id;
-                // If UI's active game ID doesn't match, or player structure changed, reset from DB
-                // Also, ensure we filter by master list if it changed.
                 const uiScoresShouldBePreserved =
                     activeGameIdInUI.current === latestGameDataFromDB.id &&
-                    currentGamePlayers.length === latestGameDataFromDB.players.length &&
+                    currentGamePlayers.length === (latestGameDataFromDB.players?.length || 0) &&
                     currentGamePlayers.every(p => latestGameDataFromDB.players.some(dbP => dbP.name === p.name));
 
                 if (uiScoresShouldBePreserved) {
-                     // Player structure matches, keep UI scores, just filter by master list if it changed
                     if (prevMasterPlayerListRef.current !== masterPlayerList) {
                         setCurrentGamePlayers(prev => prev.filter(p => masterPlayerNamesSet.has(p.name)));
                     }
-                    // If master list is same, and player structure is same, currentGamePlayers (with scores) is fine.
                 } else {
-                    // Load players from this active DB game
-                    const initialPlayers = latestGameDataFromDB.players
+                    const initialPlayers = (latestGameDataFromDB.players || [])
                         .map(p_db => ({ name: p_db.name, score: p_db.score === undefined ? 0 : p_db.score }))
                         .filter(p => masterPlayerNamesSet.has(p.name));
                     setCurrentGamePlayers(initialPlayers);
                 }
-            } else {
+            } else { // No active game in DB for this slot, or DB games list is empty
                 activeGameIdInUI.current = null;
                 let playersForSetup = [];
-                if (latestGameDataFromDB && latestGameDataFromDB.endedAt) {
-                    playersForSetup = latestGameDataFromDB.players
+                if (latestGameDataFromDB && latestGameDataFromDB.endedAt) { // Last game in current slot ended
+                    playersForSetup = (latestGameDataFromDB.players || [])
                         .map(p => ({ name: p.name, score: 0 }))
                         .filter(p => masterPlayerNamesSet.has(p.name));
-                } else if (newGamesFromDB.length === 0) {
+                } else if (newGamesFromDB.length === 0) { // No games in current slot, try previous slot
                     const userSlotsCollectionRefInner = collection(db, `artifacts/${appId}/users/${userId}/slots`);
                     const slotsQueryInner = query(userSlotsCollectionRefInner, orderBy('createdAt', 'desc'));
                     const slotsSnapshotInner = await getDocs(slotsQueryInner);
@@ -188,7 +184,7 @@ function App() {
                             if (!prevGamesSnapInner.empty) {
                                 const lastGamePrevSlotInner = prevGamesSnapInner.docs[0].data();
                                 if (lastGamePrevSlotInner.endedAt) {
-                                    playersForSetup = lastGamePrevSlotInner.players
+                                    playersForSetup = (lastGamePrevSlotInner.players || [])
                                         .map(p => ({ name: p.name, score: 0 }))
                                         .filter(p => masterPlayerNamesSet.has(p.name));
                                 }
@@ -202,19 +198,15 @@ function App() {
             console.error("Error fetching games:", error);
             displayMessage(`Error fetching games details: ${error.message}`);
             activeGameIdInUI.current = null;
-            if (!pendingGame) setCurrentGamePlayers([]);
+            if (!pendingGame && !editingGameInfo) setCurrentGamePlayers([]);
         });
         
-        // Update the ref *after* the onSnapshot callback is defined and potentially run,
-        // so for the *next* execution of this effect, it has the masterPlayerList from *this* execution.
         prevMasterPlayerListRef.current = masterPlayerList;
+        return () => unsubscribe();
+    }, [db, user, appId, userId, selectedSlot, masterPlayerList, loading, displayMessage, pendingGame, editingGameInfo]);
 
-        return () => {
-            unsubscribe();
-        };
-    }, [db, user, appId, userId, selectedSlot, masterPlayerList, loading, displayMessage, pendingGame]);
 
-    const handleCreateNewSlot = useCallback(async () => {
+    const handleCreateNewSlot = useCallback(async () => { /* ... same ... */
         if (!db || !user || !appId || !userId) {
             displayMessage("Database not ready or user not signed in."); return;
         }
@@ -233,88 +225,107 @@ function App() {
             const newSlotDoc = await addDoc(userSlotsCollectionRef, newSlotData);
             displayMessage(`New slot created: ${dateString} (ID: ${nextSlotId})`);
             setSelectedSlot({ id: newSlotDoc.id, ...newSlotData });
-            setPendingGame(null); // Reset pending game
-            setCurrentGamePlayers([]); // Reset players for the new slot
+            setPendingGame(null);
+            setEditingGameInfo(null); // Reset editing state
+            setCurrentGamePlayers([]);
         } catch (error) {
             console.error("Error creating new slot:", error);
             displayMessage(`Error creating slot: ${error.message}`);
         }
     }, [db, user, appId, userId, displayMessage]);
 
-    const handleSelectSlot = useCallback((slot) => {
-        setSelectedSlot(slot);
-        setPendingGame(null); // Reset pending game
-        activeGameIdInUI.current = null;
-        // currentGamePlayers will be set by useEffect
-        if (slot) {
-            displayMessage(`Slot ${slot.slotId} (${slot.date}) selected.`);
-        } else {
-            setCurrentGamePlayers([]); // Clear players if deselecting to main slot list
+    const handleSelectSlot = useCallback((slot) => { /* ... same, added editingGameInfo reset ... */
+        // Prevent changing slot if a game interaction is active
+        if (pendingGame?.isLocallyActive) {
+            displayMessage("Finish or cancel the current new game before changing slots.");
+            return;
         }
-    }, [displayMessage]);
+        if (editingGameInfo) {
+            displayMessage("Save or cancel editing the game before changing slots.");
+            return;
+        }
+        const activeDBGame = games.find(g => !g.endedAt && g.id === activeGameIdInUI.current);
+        if (activeDBGame) {
+            displayMessage(`Game ${activeDBGame.gameNumber} is active. End or cancel it before changing slots.`);
+            return;
+        }
 
-    const handleStartLocalGame = useCallback(() => {
+        setSelectedSlot(slot);
+        setPendingGame(null);
+        setEditingGameInfo(null); // Reset editing state
+        activeGameIdInUI.current = null;
+        if (!slot) { // If deselecting slot (going back to slot list)
+            setCurrentGamePlayers([]);
+        }
+        // currentGamePlayers will be set by useEffect when slot is selected
+    }, [pendingGame, editingGameInfo, games, activeGameIdInUI, displayMessage]);
+
+    // Renamed from handleStartLocalGame
+    const handleStartNewGame = useCallback(() => {
         if (!selectedSlot) {
             displayMessage("Please select a slot first."); return;
         }
+        if (editingGameInfo) {
+            displayMessage("Currently editing a game. Cancel or save first."); return;
+        }
         if (currentGamePlayers.length < 2) {
-            displayMessage("A game needs at least two players. Select them for the new game."); return;
+            displayMessage("A new game needs at least two players."); return;
         }
         const isFirestoreGameActive = games.some(g => !g.endedAt);
         if (isFirestoreGameActive) {
             displayMessage("An existing game is active. End it before starting a new one."); return;
         }
         if (pendingGame?.isLocallyActive) {
-            displayMessage("A local game is already in progress. End or cancel it first."); return;
+            displayMessage("A new game is already in progress. End or cancel it first."); return;
         }
 
-        const lastGameNumberFromDB = games.length > 0 ? games.reduce((max, g) => Math.max(max, g.gameNumber), 0) : 0;
+        const lastGameNumberFromDB = games.length > 0 ? games.reduce((max, g) => Math.max(max, g.gameNumber || 0), 0) : 0;
         const nextGameNumber = lastGameNumberFromDB + 1;
 
         setPendingGame({
             gameNumber: nextGameNumber,
-            createdAt: Date.now(),
-            isRotationGame: false, // Default for a new local game
+            createdAt: Date.now(), // Will be serverTimestamp on save for addDoc
+            isRotationGame: false,
             isLocallyActive: true,
         });
-        // currentGamePlayers are already set up (with scores 0) by onTogglePlayerForNextGame or useEffect
-        displayMessage(`Local Game ${nextGameNumber} started. Enter scores.`);
+        displayMessage(`New Game ${nextGameNumber} started. Enter scores.`);
         activeGameIdInUI.current = null;
-    }, [selectedSlot, currentGamePlayers, games, pendingGame, displayMessage]);
+        setEditingGameInfo(null);
+    }, [selectedSlot, currentGamePlayers, games, pendingGame, displayMessage, editingGameInfo]);
 
-    const handleUpdatePlayerScore = useCallback((playerName, scoreInput) => {
+    const handleUpdatePlayerScore = useCallback((playerName, scoreInput) => { /* ... same ... */
         const newScore = Math.max(0, parseInt(scoreInput, 10) || 0);
         setCurrentGamePlayers(prev => prev.map(p => (p.name === playerName ? { ...p, score: newScore } : p)));
     }, []);
 
     const handleToggleRotationForCurrentGame = useCallback((isRotation) => {
-        if (pendingGame?.isLocallyActive) {
-            setPendingGame(prev => ({ ...prev, isRotationGame: isRotation }));
-            // displayMessage(`Rotation for local game ${isRotation ? 'enabled' : 'disabled'}.`); // Optional message
+        if (editingGameInfo) {
+            setEditingGameInfo(prev => prev ? { ...prev, isRotationGame: isRotation } : null);
             return;
         }
-
+        if (pendingGame?.isLocallyActive) {
+            setPendingGame(prev => prev ? { ...prev, isRotationGame: isRotation } : null);
+            return;
+        }
         const activeGameFromState = games.find(g => !g.endedAt && g.id === activeGameIdInUI.current);
         if (!selectedSlot || !activeGameFromState || !db || !user || !appId || !userId) {
-            displayMessage("Cannot update rotation: No active game from DB or not signed in."); return;
+            displayMessage("Cannot update rotation: No active game or not signed in."); return;
         }
-        try {
-            const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeGameFromState.id);
-            updateDoc(gameDocRef, { isRotationGame: isRotation }); // Async, but no await needed if just fire and forget
-        } catch (error) {
-            displayMessage(`Error updating rotation: ${error.message}`);
-        }
-    }, [games, selectedSlot, db, user, appId, userId, displayMessage, pendingGame]);
+        const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeGameFromState.id);
+        updateDoc(gameDocRef, { isRotationGame: isRotation })
+          .catch(error => displayMessage(`Error updating rotation: ${error.message}`));
+    }, [games, selectedSlot, db, user, appId, userId, displayMessage, pendingGame, editingGameInfo]);
 
-    const handleEndGame = useCallback(async () => {
-        const isLocalGameActive = pendingGame?.isLocallyActive;
+    const handleEndGame = useCallback(async () => { // Handles ending new game AND saving edited game
+        const isNewGame = pendingGame?.isLocallyActive;
+        const isEditing = !!editingGameInfo;
         const activeFirestoreGame = games.find(g => !g.endedAt && g.id === activeGameIdInUI.current);
 
-        if (!isLocalGameActive && !activeFirestoreGame) {
-            displayMessage("No active game to end."); return;
+        if (!isNewGame && !isEditing && !activeFirestoreGame) {
+            displayMessage("No active game to end or save."); return;
         }
         if (currentGamePlayers.length < 2) {
-            displayMessage("A game needs at least two players to end."); return;
+            displayMessage("A game needs at least two players."); return;
         }
 
         const zeroScorePlayers = currentGamePlayers.filter(p => p.score === 0);
@@ -324,7 +335,7 @@ function App() {
         const winner = zeroScorePlayers[0];
         let totalPointsTransferred = 0;
         const finalPlayerScores = currentGamePlayers.map(player => {
-            if (player.name === winner.name) return { name: player.name, score: 0 };
+            if (player.name === winner.name) return { name: player.name, score: 0 }; // No isWinner flag needed for DB
             totalPointsTransferred += player.score;
             return { name: player.name, score: -player.score };
         });
@@ -335,56 +346,60 @@ function App() {
         if (finalPlayerScores.reduce((sum, p) => sum + p.score, 0) !== 0) {
             displayMessage("Error: Game scores do not balance. Check entries."); return;
         }
+        
+        const commonGameData = {
+            players: finalPlayerScores,
+            winnerPlayerName: winner.name,
+            pointsTransferred: totalPointsTransferred,
+            endedAt: serverTimestamp(), // Use serverTimestamp for consistency
+        };
 
-        if (isLocalGameActive) { // Ending a local game
-            if (!db || !user || !appId || !userId || !selectedSlot) {
-                displayMessage("Cannot save game: Not signed in or database not ready."); return;
-            }
-            try {
+        if (!db || !user || !appId || !userId || !selectedSlot) {
+            displayMessage("Cannot save game: Not signed in or database not ready."); return;
+        }
+
+        try {
+            if (isEditing) {
+                const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, editingGameInfo.id);
+                await updateDoc(gameDocRef, {
+                    ...commonGameData,
+                    isRotationGame: editingGameInfo.isRotationGame, // Get from editingGameInfo state
+                    // gameNumber and createdAt remain unchanged for an edited game
+                });
+                displayMessage(`Game ${editingGameInfo.gameNumber} updated! ${winner.name} won ${totalPointsTransferred} points.`);
+                setEditingGameInfo(null);
+            } else if (isNewGame) {
                 const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
                 await addDoc(slotGamesCollectionRef, {
+                    ...commonGameData,
                     gameNumber: pendingGame.gameNumber,
-                    createdAt: pendingGame.createdAt,
-                    players: finalPlayerScores,
-                    winnerPlayerName: winner.name,
-                    pointsTransferred: totalPointsTransferred,
-                    endedAt: Date.now(),
-                    isRotationGame: pendingGame.isRotationGame, // Save the rotation status from pendingGame
+                    createdAt: serverTimestamp(), // Use serverTimestamp for new game
+                    isRotationGame: pendingGame.isRotationGame,
                 });
                 displayMessage(`Game ${pendingGame.gameNumber} ended and saved! ${winner.name} won ${totalPointsTransferred} points.`);
                 setPendingGame(null);
-            } catch (error) {
-                console.error("Error saving new game:", error);
-                displayMessage(`Error saving game: ${error.message}`);
-            }
-        } else if (activeFirestoreGame) { // Ending a game that was active in Firestore
-             if (!db || !user || !appId || !userId || !selectedSlot) {
-                displayMessage("Cannot end game: Not signed in or database not ready."); return;
-            }
-            try {
+            } else if (activeFirestoreGame) { // Ending an active game from Firestore (not an edit)
                 const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeFirestoreGame.id);
                 await updateDoc(gameDocRef, {
-                    players: finalPlayerScores,
-                    winnerPlayerName: winner.name,
-                    pointsTransferred: totalPointsTransferred,
-                    endedAt: Date.now(),
-                    // isRotationGame would have been updated by its own handler if changed
+                    ...commonGameData,
+                    isRotationGame: activeFirestoreGame.isRotationGame, // Or from currentGame if it can be changed for active DB games
                 });
                 displayMessage(`Game ${activeFirestoreGame.gameNumber} ended! ${winner.name} won ${totalPointsTransferred} points.`);
                 activeGameIdInUI.current = null;
-            } catch (error) {
-                console.error("Error ending DB game:", error);
-                displayMessage(`Error ending game: ${error.message}`);
             }
+             // After any save/end, currentGamePlayers will be reset/re-evaluated by the main useEffect
+        } catch (error) {
+            console.error("Error saving/ending game:", error);
+            displayMessage(`Error saving game: ${error.message}`);
         }
-    }, [db, user, appId, userId, selectedSlot, games, pendingGame, currentGamePlayers, displayMessage]);
+    }, [db, user, appId, userId, selectedSlot, games, pendingGame, editingGameInfo, currentGamePlayers, displayMessage]);
 
-    const handleCancelGame = useCallback(() => {
+    const handleCancelGame = useCallback(() => { // Cancels a new game or an active DB game
         if (pendingGame?.isLocallyActive) {
-            setGameToCancelId('local');
+            setGameToCancelId('local'); // 'local' indicates it's the pendingGame
             setGameToCancelNumber(pendingGame.gameNumber);
             setShowCancelGameConfirm(true);
-        } else {
+        } else { // Cancelling an active game from Firestore
             const activeGameFromState = games.find(game => !game.endedAt && game.id === activeGameIdInUI.current);
             if (!activeGameFromState) {
                 displayMessage("No active game from DB to cancel."); return;
@@ -394,20 +409,25 @@ function App() {
             setShowCancelGameConfirm(true);
         }
     }, [games, displayMessage, pendingGame]);
-
-    const confirmCancelGame = useCallback(async () => {
-        if (gameToCancelId === 'local' && pendingGame) { // Check pendingGame exists
-            displayMessage(`Local Game ${pendingGame.gameNumber} cancelled.`);
+    
+    const confirmCancelGame = useCallback(async () => { // Confirms cancellation of new or active DB game
+        if (gameToCancelId === 'local' && pendingGame) {
+            displayMessage(`New Game ${pendingGame.gameNumber} cancelled.`);
             setPendingGame(null);
-        } else if (gameToCancelId !== 'local' && gameToCancelId) { // Ensure it's a DB game ID
-            if (!db || !user || !appId || !userId || !selectedSlot) return;
+            // Player list reset handled by useEffect
+        } else if (gameToCancelId && gameToCancelId !== 'local') { // DB game ID
+            if (!db || !user || !appId || !userId || !selectedSlot) {
+                displayMessage("Cannot cancel DB game: System not ready.");
+                setShowCancelGameConfirm(false); return;
+            }
             try {
                 const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, gameToCancelId);
-                await deleteDoc(gameDocRef);
-                displayMessage(`Game ${gameToCancelNumber} cancelled.`);
+                await deleteDoc(gameDocRef); // Deleting an active (but un-ended) game
+                displayMessage(`Game ${gameToCancelNumber} cancelled from database.`);
                 activeGameIdInUI.current = null;
+                // Player list reset handled by useEffect
             } catch (error) {
-                console.error("Error cancelling game:", error);
+                console.error("Error cancelling game from DB:", error);
                 displayMessage(`Error cancelling game: ${error.message}`);
             }
         }
@@ -416,11 +436,58 @@ function App() {
         setGameToCancelNumber(null);
     }, [db, user, appId, userId, selectedSlot, gameToCancelId, gameToCancelNumber, displayMessage, pendingGame]);
 
-    const dismissCancelGame = useCallback(() => {
+    const dismissCancelGame = useCallback(() => { /* ... same ... */
         setShowCancelGameConfirm(false); setGameToCancelId(null); setGameToCancelNumber(null);
     }, []);
 
-    const handleAddPlayerToMasterList = useCallback(async (playerName) => {
+    // --- New Edit Game Functions ---
+    const handleInitiateEditLastEndedGame = useCallback(() => {
+        if (!selectedSlot || games.length === 0) {
+            displayMessage("No games in this slot to edit.");
+            return;
+        }
+        const endedGames = games.filter(g => g.endedAt).sort((a, b) => b.endedAt.seconds - a.endedAt.seconds); // Sort by actual ended time
+        if (endedGames.length === 0) {
+            displayMessage("No ended games in this slot to edit.");
+            return;
+        }
+        const lastEndedGame = endedGames[0];
+
+        if (!lastEndedGame || !lastEndedGame.players || !lastEndedGame.winnerPlayerName) {
+            displayMessage("Last ended game data is incomplete.");
+            return;
+        }
+
+        // Reconstruct scores for input: winner gets 0, others get their positive "lost" points
+        const reconstructedPlayers = lastEndedGame.players.map(p => {
+            if (p.name === lastEndedGame.winnerPlayerName) {
+                return { name: p.name, score: 0 };
+            }
+            // Assuming scores are stored as negative for losers, positive for winner.
+            // We need the absolute value of the loser's score.
+            return { name: p.name, score: Math.abs(p.score) };
+        });
+
+        setEditingGameInfo({
+            id: lastEndedGame.id,
+            gameNumber: lastEndedGame.gameNumber,
+            isRotationGame: !!lastEndedGame.isRotationGame,
+        });
+        setCurrentGamePlayers(reconstructedPlayers);
+        setPendingGame(null);
+        activeGameIdInUI.current = null;
+        displayMessage(`Editing Game ${lastEndedGame.gameNumber}. Adjust scores and save.`);
+    }, [games, selectedSlot, displayMessage]);
+
+    const handleCancelEdit = useCallback(() => {
+        if (!editingGameInfo) return;
+        displayMessage(`Cancelled editing Game ${editingGameInfo.gameNumber}.`);
+        setEditingGameInfo(null);
+        setCurrentGamePlayers([]); // Or trigger useEffect to reset based on slot
+    }, [editingGameInfo, displayMessage]);
+
+
+    const handleAddPlayerToMasterList = useCallback(async (playerName) => { /* ... same ... */
         if (!db || !user || !appId || !userId) { displayMessage("Not signed in."); return; }
         const trimmedName = playerName.trim();
         if (!trimmedName) { displayMessage("Player name cannot be empty."); return; }
@@ -430,44 +497,47 @@ function App() {
         try {
             const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
             const masterPlayersRef = collection(userDocRef, 'masterPlayers');
-            await addDoc(masterPlayersRef, { name: trimmedName, createdAt: Date.now() });
+            await addDoc(masterPlayersRef, { name: trimmedName, createdAt: serverTimestamp() });
             displayMessage(`Player ${trimmedName} added to roster.`);
         } catch (error) {
             displayMessage(`Error adding player: ${error.message}`);
         }
     }, [db, user, appId, userId, masterPlayerList, displayMessage]);
 
-    const handleRemovePlayerFromMasterList = useCallback(async (playerId, playerName) => {
+    const handleRemovePlayerFromMasterList = useCallback(async (playerId, playerName) => { /* ... same ... */
         if (!db || !user || !appId || !userId) { displayMessage("Not signed in."); return; }
 
         const isPlayerInLocalGame = pendingGame?.isLocallyActive && currentGamePlayers.some(p => p.name === playerName);
         const firestoreActiveGame = games.find(g => !g.endedAt && g.id === activeGameIdInUI.current);
         const isPlayerInDBActiveGame = firestoreActiveGame?.players.some(p => p.name === playerName);
+        const isPlayerInEditingGame = editingGameInfo && currentGamePlayers.some(p => p.name === playerName);
+
 
         if (isPlayerInLocalGame) {
-            displayMessage(`Cannot remove "${playerName}"; player is in the current local game. Cancel it first.`);
-            return;
+            displayMessage(`Cannot remove "${playerName}"; player is in the current new game. Cancel it first.`); return;
         }
         if (isPlayerInDBActiveGame) {
-            displayMessage(`Cannot remove "${playerName}"; player is in an active DB game. End or cancel that game first.`);
-            return;
+            displayMessage(`Cannot remove "${playerName}"; player is in an active DB game. End or cancel that game first.`); return;
         }
+        if (isPlayerInEditingGame) {
+            displayMessage(`Cannot remove "${playerName}"; player is in the game being edited. Cancel edit first.`); return;
+        }
+
 
         try {
             const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
             const playerDocRef = doc(collection(userDocRef, 'masterPlayers'), playerId);
             await deleteDoc(playerDocRef);
             displayMessage(`Player ${playerName} removed from roster.`);
-            setCurrentGamePlayers(prev => prev.filter(p => p.name !== playerName));
         } catch (error) {
             displayMessage(`Error removing player: ${error.message}`);
         }
-    }, [db, user, appId, userId, games, pendingGame, currentGamePlayers, displayMessage]);
+    }, [db, user, appId, userId, games, pendingGame, editingGameInfo, currentGamePlayers, displayMessage]);
 
-    const onTogglePlayerForNextGame = useCallback((playerName) => {
+    const onTogglePlayerForNextGame = useCallback((playerName) => { /* ... same ... */
         const isGameActiveDB = games.some(g => !g.endedAt && g.id === activeGameIdInUI.current);
-        if (isGameActiveDB || pendingGame?.isLocallyActive) {
-            displayMessage("Cannot change player selection while a game is active.");
+        if (isGameActiveDB || pendingGame?.isLocallyActive || editingGameInfo) { // Also check editingGameInfo
+            displayMessage("Cannot change player selection while a game is active or being edited.");
             return;
         }
         setCurrentGamePlayers(prev => {
@@ -477,48 +547,52 @@ function App() {
             } else {
                 const playerToAdd = masterPlayerList.find(p => p.name === playerName);
                 if (playerToAdd) {
-                    return [...prev, { name: playerToAdd.name, score: 0 }]; // Initialize score to 0
+                    return [...prev, { name: playerToAdd.name, score: 0 }];
                 }
                 return prev;
             }
         });
-    }, [games, masterPlayerList, displayMessage, pendingGame]);
+    }, [games, masterPlayerList, displayMessage, pendingGame, editingGameInfo]);
+
 
     const renderContent = () => {
-        if (loading) {
+        if (loading && !auth) { /* ... same ... */
             return (
                 <div className="flex flex-col items-center justify-center flex-grow p-6 text-center">
-                    <p className="text-lg text-gray-300">Loading user data...</p>
                 </div>
             );
         }
-        if (!user) {
+        if (!user) { /* ... same ... */
             return (
-                <div className="flex flex-col items-center justify-center flex-grow p-6 text-center bg-gray-800 rounded-xl shadow-lg m-4">
-                    <p className="text-lg text-white mb-6">Please sign in with Google to manage your scores.</p>
+                <div className="flex flex-col items-center justify-center flex-grow p-6 text-center bg-gray-800 rounded-xl shadow-lg m-4 max-w-md mx-auto">
+                    <h2 className="text-xl font-semibold text-white mb-4">Welcome!</h2>
+                    <p className="text-base text-gray-300 mb-6">Please sign in with Google to manage your game scores.</p>
                 </div>
             );
         }
+
+        const lastEndedGameExistsInSlot = selectedSlot && games.some(g => g.endedAt && g.slotId === selectedSlot.id); // Simplified for prop passing
+
         if (selectedSlot) {
             return (
                 <div className="p-3 sm:p-4 space-y-4">
                     <div className="flex items-center justify-between mb-3">
                         <button
                             onClick={() => {
-                                if (pendingGame?.isLocallyActive) {
-                                    displayMessage("Cancel or end the local game before changing slots.");
+                                if (pendingGame?.isLocallyActive || editingGameInfo || games.some(g => !g.endedAt && g.id === activeGameIdInUI.current)) {
+                                    displayMessage("Finish, save, or cancel current game interaction before changing slots.");
                                     return;
                                 }
                                 handleSelectSlot(null);
                             }}
-                            className="flex items-center px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md shadow-sm text-sm"
+                            className="flex items-center px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 focus:ring-offset-gray-900"
                         >
-                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5 mr-1.5" viewBox="0 0 20 20" fill="currentColor">
                                 <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
                             </svg>
                             Back to Slots
                         </button>
-                        <h2 className="text-lg sm:text-xl font-bold text-white text-right">
+                        <h2 className="text-lg sm:text-xl font-bold text-white text-right truncate">
                             Slot {selectedSlot.slotId} <span className="font-normal text-sm sm:text-base">({selectedSlot.date})</span>
                         </h2>
                     </div>
@@ -526,26 +600,31 @@ function App() {
                         currentGamePlayers={currentGamePlayers}
                         handleUpdatePlayerScore={handleUpdatePlayerScore}
                         handleEndGame={handleEndGame}
-                        handleStartLocalGame={handleStartLocalGame}
+                        handleStartNewGame={handleStartNewGame} // << Renamed
                         handleCancelGame={handleCancelGame}
-                        games={games}
+                        games={games} // Pass all games for context (e.g. next game number)
                         masterPlayerList={masterPlayerList}
                         onTogglePlayerForNextGame={onTogglePlayerForNextGame}
                         onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame}
                         pendingGame={pendingGame}
                         activeFirestoreGameId={activeGameIdInUI.current}
+                        // --- Edit Props ---
+                        editingGameInfo={editingGameInfo}
+                        onInitiateEditLastEndedGame={handleInitiateEditLastEndedGame}
+                        onCancelEdit={handleCancelEdit}
+                        canEditLastGame={games.some(g => g.endedAt)} // Checks if any game in current slot has ended
                     />
                     <GameList games={games} />
                 </div>
             );
-        } else {
-            return (
-                <div className="p-3 sm:p-4 space-y-4">
-                    <div className="flex flex-wrap justify-between items-center mb-3 gap-2">
+        } else { // Slot selection view
+             return ( /* ... same ... */
+                <div className="p-3 sm:p-4 space-y-4 max-w-2xl mx-auto">
+                    <div className="flex flex-col sm:flex-row justify-between items-center mb-3 gap-3 sm:gap-2">
                         <h2 className="text-xl sm:text-2xl font-bold text-white">Your Gaming Slots</h2>
                         <button
                             onClick={() => setShowPlayerManager(true)}
-                            className="px-3 py-2 sm:px-4 sm:py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md text-xs sm:text-sm"
+                            className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 focus:ring-offset-gray-900"
                         > Manage Player Roster
                         </button>
                     </div>
@@ -559,8 +638,8 @@ function App() {
         }
     };
 
-    return (
-        <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
+    return ( /* ... same wrapper ... */
+        <div className="flex flex-col min-h-screen bg-gray-900 text-gray-100 font-sans">
             <Header>
                 <AuthButtons
                     user={user}
@@ -584,7 +663,7 @@ function App() {
                 <ConfirmationDialog
                     show={showCancelGameConfirm}
                     title="Confirm Game Cancellation"
-                    message={`Are you sure you want to cancel Game ${gameToCancelNumber}${gameToCancelId === 'local' ? ' (this local game)' : ''}? This action cannot be undone.`}
+                    message={`Are you sure you want to cancel Game ${gameToCancelNumber}${gameToCancelId === 'local' ? ' (this new game)' : ''}? This action cannot be undone.`}
                     onConfirm={confirmCancelGame}
                     onCancel={dismissCancelGame}
                 />

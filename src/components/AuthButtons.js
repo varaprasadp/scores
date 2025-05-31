@@ -1,17 +1,18 @@
-// src/components/AuthButtons.js
 import React from 'react';
 
 function AuthButtons({ user, handleGoogleSignIn, handleSignOut }) {
+  const baseButtonClass = "px-4 py-2 text-sm sm:text-base font-medium rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800";
+
   return (
     <>
       {user ? (
-        <div className="flex flex-col sm:flex-row items-center sm:items-baseline gap-2 sm:gap-3">
-          <span className="text-xs sm:text-sm text-gray-300 order-2 sm:order-1 text-center sm:text-left" title={user.email || ''}>
+        <div className="flex flex-col sm:flex-row items-center sm:items-baseline gap-2 sm:gap-3 w-full sm:w-auto">
+          <span className="text-xs sm:text-sm text-gray-300 order-2 sm:order-1 text-center sm:text-left truncate max-w-[150px] sm:max-w-[200px]" title={user.email || ''}>
             Hi, {user.displayName ? user.displayName.split(' ')[0] : 'User'}!
           </span>
           <button
             onClick={handleSignOut}
-            className="order-1 sm:order-2 w-full sm:w-auto px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm bg-red-600 hover:bg-red-700 text-white font-medium rounded-md shadow-md transition-colors"
+            className={`${baseButtonClass} order-1 sm:order-2 w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white focus:ring-red-500`}
           >
             Sign Out
           </button>
@@ -19,7 +20,7 @@ function AuthButtons({ user, handleGoogleSignIn, handleSignOut }) {
       ) : (
         <button
           onClick={handleGoogleSignIn}
-          className="px-4 py-2 sm:px-5 sm:py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-md transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
+          className={`${baseButtonClass} w-full max-w-xs mx-auto sm:w-auto bg-blue-600 hover:bg-blue-700 text-white focus:ring-blue-500 flex items-center justify-center gap-2`}
         >
           <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
             <path d="M12.24 10.285V11.85h2.95c-.15 1.05-.72 1.88-1.78 2.53v2.09h2.69c1.58-1.46 2.5-3.6 2.5-6.15 0-.7-.07-1.37-.2-2.02H12.24z" />
