@@ -4,7 +4,7 @@ function GameInput({
   currentGamePlayers,
   handleUpdatePlayerScore,
   handleEndGame,
-  handleStartNewGame, // << Renamed from handleStartLocalGame
+  handleStartNewGame,
   handleCancelGame,
   games,
   masterPlayerList,
@@ -12,18 +12,19 @@ function GameInput({
   onToggleRotationForCurrentGame,
   pendingGame,
   activeFirestoreGameId,
-  // --- New props for Edit Functionality ---
-  editingGameInfo, // { id, gameNumber, isRotationGame } | null
+  editingGameInfo,
   onInitiateEditLastEndedGame,
   onCancelEdit,
-  canEditLastGame, // boolean: true if a last ended game exists to be edited
+  canEditLastGame,
+  boardCharge,
+  handleUpdateBoardCharge,
 }) {
   const isLocalGameActive = !!pendingGame?.isLocallyActive;
   const firestoreActiveGame = games.find(g => !g.endedAt && g.id === activeFirestoreGameId);
   const isGameEffectivelyActive = isLocalGameActive || !!firestoreActiveGame;
   const isEditingActive = !!editingGameInfo;
 
-  let gameForUI; // For title and game number display during active/editing states
+  let gameForUI;
   if (isEditingActive) {
     gameForUI = editingGameInfo;
   } else if (isLocalGameActive) {
@@ -71,7 +72,6 @@ function GameInput({
       </h3>
 
       {(isGameEffectivelyActive || isEditingActive) && gameForUI ? (
-        // Active Game UI (New, DB, or Editing)
         <>
           <p className="text-xs sm:text-sm text-gray-300 mb-3">
             Enter points lost by each player. Winner must have 0 points.
@@ -102,6 +102,23 @@ function GameInput({
               );
             })}
           </div>
+
+          <div className="flex items-center gap-2 mb-4">
+              <label htmlFor="boardCharge" className="text-gray-200 text-sm whitespace-nowrap font-medium">
+                  Board Charge:
+              </label>
+              <input
+                  id="boardCharge"
+                  type="number"
+                  pattern="\d*"
+                  inputMode="numeric"
+                  value={boardCharge.toString()}
+                  onChange={(e) => handleUpdateBoardCharge(e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                  className={`w-full max-w-[120px] ${inputBaseClass}`}
+                  placeholder="e.g., 50"
+              />
+          </div>
+
           <div className="flex items-center mt-3 mb-4">
             <input
               type="checkbox"
@@ -117,7 +134,7 @@ function GameInput({
 
           <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-3">
             <button
-              onClick={handleEndGame} // This will handle both ending new game and saving edited game
+              onClick={handleEndGame}
               className={`${primaryButtonClass} sm:flex-1 bg-yellow-500 hover:bg-yellow-600 text-black focus:ring-yellow-400 disabled:bg-yellow-700 disabled:text-gray-700`}
               disabled={!canEndOrSaveChanges}
             >
@@ -132,7 +149,6 @@ function GameInput({
           </div>
         </>
       ) : (
-        // Setup New Game UI (or show Edit Last Game button)
         <>
           <p className="text-xs sm:text-sm text-gray-300 mb-3">
             Select players for Game {nextGameNumberDisplay}:
@@ -178,7 +194,7 @@ function GameInput({
           )}
           <div className="flex flex-col gap-2 sm:gap-3">
             <button
-              onClick={handleStartNewGame} // << Renamed from handleStartLocalGame
+              onClick={handleStartNewGame}
               className={`${primaryButtonClass} w-full bg-green-600 hover:bg-green-700 text-white focus:ring-green-500 disabled:bg-gray-500 disabled:text-gray-300`}
               disabled={playersInCurrentInteraction.length < 2 || masterPlayerList.length === 0 || isGameEffectivelyActive || isEditingActive}
             >

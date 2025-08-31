@@ -32,6 +32,7 @@ function App() {
 
     const [pendingGame, setPendingGame] = useState(null); // For a new game not yet saved
     const [editingGameInfo, setEditingGameInfo] = useState(null); // { id, gameNumber, isRotationGame } for editing
+    const [boardCharge, setBoardCharge] = useState(0); // State for board charge on a game
 
     const activeGameIdInUI = useRef(null); // Firestore ID of an *active* game being shown in UI
     const prevMasterPlayerListRef = useRef();
@@ -72,6 +73,7 @@ function App() {
             setShowPlayerManager(false);
             setPendingGame(null);
             setEditingGameInfo(null); // Reset editing state
+            setBoardCharge(0);
             activeGameIdInUI.current = null;
         } catch (error) {
             console.error("Error during sign-out:", error);
@@ -227,6 +229,7 @@ function App() {
             setSelectedSlot({ id: newSlotDoc.id, ...newSlotData });
             setPendingGame(null);
             setEditingGameInfo(null); // Reset editing state
+            setBoardCharge(0);
             setCurrentGamePlayers([]);
         } catch (error) {
             console.error("Error creating new slot:", error);
@@ -253,6 +256,7 @@ function App() {
         setSelectedSlot(slot);
         setPendingGame(null);
         setEditingGameInfo(null); // Reset editing state
+        setBoardCharge(0);
         activeGameIdInUI.current = null;
         if (!slot) { // If deselecting slot (going back to slot list)
             setCurrentGamePlayers([]);
@@ -288,6 +292,7 @@ function App() {
             isRotationGame: false,
             isLocallyActive: true,
         });
+        setBoardCharge(0); // Reset board charge for new game
         displayMessage(`New Game ${nextGameNumber} started. Enter scores.`);
         activeGameIdInUI.current = null;
         setEditingGameInfo(null);
@@ -296,6 +301,11 @@ function App() {
     const handleUpdatePlayerScore = useCallback((playerName, scoreInput) => { /* ... same ... */
         const newScore = Math.max(0, parseInt(scoreInput, 10) || 0);
         setCurrentGamePlayers(prev => prev.map(p => (p.name === playerName ? { ...p, score: newScore } : p)));
+    }, []);
+
+    const handleUpdateBoardCharge = useCallback((charge) => {
+        const newCharge = Math.max(0, parseInt(charge, 10) || 0);
+        setBoardCharge(newCharge);
     }, []);
 
     const handleToggleRotationForCurrentGame = useCallback((isRotation) => {
@@ -335,22 +345,26 @@ function App() {
         const winner = zeroScorePlayers[0];
         let totalPointsTransferred = 0;
         const finalPlayerScores = currentGamePlayers.map(player => {
-            if (player.name === winner.name) return { name: player.name, score: 0 }; // No isWinner flag needed for DB
+            if (player.name === winner.name) return { name: player.name, score: 0 };
             totalPointsTransferred += player.score;
             return { name: player.name, score: -player.score };
         });
 
         const winnerIdx = finalPlayerScores.findIndex(p => p.name === winner.name);
-        if (winnerIdx !== -1) finalPlayerScores[winnerIdx].score = totalPointsTransferred;
-
-        if (finalPlayerScores.reduce((sum, p) => sum + p.score, 0) !== 0) {
-            displayMessage("Error: Game scores do not balance. Check entries."); return;
+        if (winnerIdx !== -1) {
+            finalPlayerScores[winnerIdx].score = totalPointsTransferred - boardCharge;
+        }
+        
+        if (finalPlayerScores.reduce((sum, p) => sum + p.score, 0) !== -boardCharge) {
+            displayMessage("Error: Game scores do not balance after board charge. Check entries.");
+            return;
         }
         
         const commonGameData = {
             players: finalPlayerScores,
             winnerPlayerName: winner.name,
             pointsTransferred: totalPointsTransferred,
+            boardCharge: boardCharge,
             endedAt: serverTimestamp(), // Use serverTimestamp for consistency
         };
 
@@ -363,36 +377,36 @@ function App() {
                 const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, editingGameInfo.id);
                 await updateDoc(gameDocRef, {
                     ...commonGameData,
-                    isRotationGame: editingGameInfo.isRotationGame, // Get from editingGameInfo state
-                    // gameNumber and createdAt remain unchanged for an edited game
+                    isRotationGame: editingGameInfo.isRotationGame,
                 });
-                displayMessage(`Game ${editingGameInfo.gameNumber} updated! ${winner.name} won ${totalPointsTransferred} points.`);
+                displayMessage(`Game ${editingGameInfo.gameNumber} updated! ${winner.name} won.`);
                 setEditingGameInfo(null);
             } else if (isNewGame) {
                 const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
                 await addDoc(slotGamesCollectionRef, {
                     ...commonGameData,
                     gameNumber: pendingGame.gameNumber,
-                    createdAt: serverTimestamp(), // Use serverTimestamp for new game
+                    createdAt: serverTimestamp(),
                     isRotationGame: pendingGame.isRotationGame,
                 });
-                displayMessage(`Game ${pendingGame.gameNumber} ended and saved! ${winner.name} won ${totalPointsTransferred} points.`);
+                displayMessage(`Game ${pendingGame.gameNumber} ended! ${winner.name} won.`);
                 setPendingGame(null);
-            } else if (activeFirestoreGame) { // Ending an active game from Firestore (not an edit)
+            } else if (activeFirestoreGame) {
                 const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, activeFirestoreGame.id);
                 await updateDoc(gameDocRef, {
                     ...commonGameData,
-                    isRotationGame: activeFirestoreGame.isRotationGame, // Or from currentGame if it can be changed for active DB games
+                    isRotationGame: activeFirestoreGame.isRotationGame,
                 });
-                displayMessage(`Game ${activeFirestoreGame.gameNumber} ended! ${winner.name} won ${totalPointsTransferred} points.`);
+                displayMessage(`Game ${activeFirestoreGame.gameNumber} ended! ${winner.name} won.`);
                 activeGameIdInUI.current = null;
             }
-             // After any save/end, currentGamePlayers will be reset/re-evaluated by the main useEffect
+            setBoardCharge(0); // Reset board charge on successful save/end
         } catch (error) {
             console.error("Error saving/ending game:", error);
             displayMessage(`Error saving game: ${error.message}`);
         }
-    }, [db, user, appId, userId, selectedSlot, games, pendingGame, editingGameInfo, currentGamePlayers, displayMessage]);
+    }, [db, user, appId, userId, selectedSlot, games, pendingGame, editingGameInfo, currentGamePlayers, boardCharge, displayMessage]);
+
 
     const handleCancelGame = useCallback(() => { // Cancels a new game or an active DB game
         if (pendingGame?.isLocallyActive) {
@@ -414,6 +428,7 @@ function App() {
         if (gameToCancelId === 'local' && pendingGame) {
             displayMessage(`New Game ${pendingGame.gameNumber} cancelled.`);
             setPendingGame(null);
+            setBoardCharge(0);
             // Player list reset handled by useEffect
         } else if (gameToCancelId && gameToCancelId !== 'local') { // DB game ID
             if (!db || !user || !appId || !userId || !selectedSlot) {
@@ -458,13 +473,10 @@ function App() {
             return;
         }
 
-        // Reconstruct scores for input: winner gets 0, others get their positive "lost" points
         const reconstructedPlayers = lastEndedGame.players.map(p => {
             if (p.name === lastEndedGame.winnerPlayerName) {
                 return { name: p.name, score: 0 };
             }
-            // Assuming scores are stored as negative for losers, positive for winner.
-            // We need the absolute value of the loser's score.
             return { name: p.name, score: Math.abs(p.score) };
         });
 
@@ -474,6 +486,7 @@ function App() {
             isRotationGame: !!lastEndedGame.isRotationGame,
         });
         setCurrentGamePlayers(reconstructedPlayers);
+        setBoardCharge(lastEndedGame.boardCharge || 0); // Load board charge for editing
         setPendingGame(null);
         activeGameIdInUI.current = null;
         displayMessage(`Editing Game ${lastEndedGame.gameNumber}. Adjust scores and save.`);
@@ -483,6 +496,7 @@ function App() {
         if (!editingGameInfo) return;
         displayMessage(`Cancelled editing Game ${editingGameInfo.gameNumber}.`);
         setEditingGameInfo(null);
+        setBoardCharge(0); // Reset board charge on cancel
         setCurrentGamePlayers([]); // Or trigger useEffect to reset based on slot
     }, [editingGameInfo, displayMessage]);
 
@@ -571,8 +585,6 @@ function App() {
             );
         }
 
-        const lastEndedGameExistsInSlot = selectedSlot && games.some(g => g.endedAt && g.slotId === selectedSlot.id); // Simplified for prop passing
-
         if (selectedSlot) {
             return (
                 <div className="p-3 sm:p-4 space-y-4">
@@ -600,19 +612,20 @@ function App() {
                         currentGamePlayers={currentGamePlayers}
                         handleUpdatePlayerScore={handleUpdatePlayerScore}
                         handleEndGame={handleEndGame}
-                        handleStartNewGame={handleStartNewGame} // << Renamed
+                        handleStartNewGame={handleStartNewGame}
                         handleCancelGame={handleCancelGame}
-                        games={games} // Pass all games for context (e.g. next game number)
+                        games={games}
                         masterPlayerList={masterPlayerList}
                         onTogglePlayerForNextGame={onTogglePlayerForNextGame}
                         onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame}
                         pendingGame={pendingGame}
                         activeFirestoreGameId={activeGameIdInUI.current}
-                        // --- Edit Props ---
                         editingGameInfo={editingGameInfo}
                         onInitiateEditLastEndedGame={handleInitiateEditLastEndedGame}
                         onCancelEdit={handleCancelEdit}
-                        canEditLastGame={games.some(g => g.endedAt)} // Checks if any game in current slot has ended
+                        canEditLastGame={games.some(g => g.endedAt)}
+                        boardCharge={boardCharge}
+                        handleUpdateBoardCharge={handleUpdateBoardCharge}
                     />
                     <GameList games={games} />
                 </div>

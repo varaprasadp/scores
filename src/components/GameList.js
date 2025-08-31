@@ -3,7 +3,7 @@ import React from 'react';
 const RotationIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 20 20" // Adjusted viewBox for a 20x20 icon
+    viewBox="0 0 20 20"
     fill="currentColor"
     className="w-3.5 h-3.5 sm:w-4 sm:h-4 inline-block mr-1 align-middle text-yellow-300"
   >
@@ -34,10 +34,11 @@ function GameList({ games }) {
   }
 
   const allPlayerNames = [...new Set(validGames.flatMap(game => game.players.map(player => player.name)))];
-  allPlayerNames.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())); // Case-insensitive sort
+  allPlayerNames.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
   const playerTotals = {};
   allPlayerNames.forEach(name => (playerTotals[name] = 0));
+  let totalBoardCharge = 0;
 
   validGames.forEach(game => {
     if (game.endedAt) {
@@ -46,6 +47,7 @@ function GameList({ games }) {
                  playerTotals[player.name] += (player.score || 0);
             }
         });
+        totalBoardCharge += (game.boardCharge || 0);
     }
   });
   
@@ -59,7 +61,7 @@ function GameList({ games }) {
       </h3>
       
       {activeGame && (
-         <div className="px-3 sm:px-4 py-3 mb-2 bg-gray-700 bg-opacity-60"> {/* Slightly more opacity */}
+         <div className="px-3 sm:px-4 py-3 mb-2 bg-gray-700 bg-opacity-60">
             <p className="text-sm text-purple-300 font-semibold flex items-center">
                 Game {activeGame.gameNumber} (Active) 
                 {activeGame.isRotationGame && <span className="ml-2 inline-flex items-center"><RotationIcon /></span>}
@@ -81,7 +83,7 @@ function GameList({ games }) {
               <tr>
                 <th
                   scope="col"
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider min-w-[100px] sm:min-w-[110px] sticky left-0 z-20 bg-gray-700" // Simplified bg, Tailwind handles opacity from parent if needed
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider min-w-[100px] sm:min-w-[110px] sticky left-0 z-20 bg-gray-700"
                 >
                   Game Info
                 </th>
@@ -100,15 +102,12 @@ function GameList({ games }) {
             <tbody className="divide-y divide-gray-600">
               {completedGames.map((game) => {
                 const isRotation = !!game.isRotationGame;
-                // Using Tailwind's opacity classes directly for tr background is cleaner
-                const rowBg = isRotation ? 'bg-purple-900/60 hover:bg-purple-900/80' : 'bg-gray-800/60 hover:bg-gray-800/80'; // e.g. bg-opacity-60
-
-                // For sticky cell, Tailwind classes are better
+                const rowBg = isRotation ? 'bg-purple-900/60 hover:bg-purple-900/80' : 'bg-gray-800/60 hover:bg-gray-800/80';
                 const stickyCellBg = isRotation ? 'bg-purple-900/70' : 'bg-gray-800/85';
 
                 return (
                   <tr
-                    key={game.id || game.gameNumber} // Ensure a unique key
+                    key={game.id || game.gameNumber}
                     className={`${rowBg} transition-colors duration-150 ease-in-out`}
                   >
                     <td
@@ -126,6 +125,11 @@ function GameList({ games }) {
                               <RotationIcon /> Rotation
                           </span>
                           )}
+                          {game.boardCharge > 0 && (
+                            <span className="font-normal text-[11px] sm:text-xs mt-0.5 text-cyan-300">
+                              Board: {game.boardCharge}
+                            </span>
+                          )}
                       </div>
                     </td>
                     {allPlayerNames.map((playerName) => {
@@ -138,10 +142,10 @@ function GameList({ games }) {
                         displayScore = score > 0 ? `+${score}` : score.toString();
                         if (playerInGame.name === game.winnerPlayerName) cellClasses = 'text-green-400 font-semibold';
                         else if (score < 0) cellClasses = 'text-red-400 font-semibold';
-                        else if (score === 0 && playerInGame.name !== game.winnerPlayerName) cellClasses = 'text-gray-200'; // Neutral for 0 score non-winner
+                        else if (score === 0 && playerInGame.name !== game.winnerPlayerName) cellClasses = 'text-gray-200';
                       } else {
                         displayScore = '-';
-                        cellClasses = 'text-gray-500'; // Dim for players not in game
+                        cellClasses = 'text-gray-500';
                       }
                       return (
                         <td
@@ -161,9 +165,16 @@ function GameList({ games }) {
                 <tr>
                   <th
                     scope="row"
-                    className="px-3 py-3 text-left text-sm sm:text-base font-semibold text-white uppercase sticky left-0 z-20 bg-gray-700 bg-opacity-95" // Ensure bg is opaque enough
+                    className="px-3 py-3 text-left text-sm sm:text-base font-semibold text-white uppercase sticky left-0 z-20 bg-gray-700 bg-opacity-95"
                   >
-                    Total
+                    <div className="flex flex-col text-left">
+                      <span className="text-sm sm:text-base font-semibold text-white uppercase">Total</span>
+                      {totalBoardCharge > 0 && (
+                          <span className="text-xs font-normal text-cyan-400 mt-0.5 normal-case">
+                              Board: {totalBoardCharge}
+                          </span>
+                      )}
+                    </div>
                   </th>
                   {allPlayerNames.map((playerName) => {
                     const total = playerTotals[playerName];
