@@ -11,7 +11,6 @@ function GameInput({
   onTogglePlayerForNextGame,
   onToggleRotationForCurrentGame,
   pendingGame,
-  activeFirestoreGameId,
   editingGameInfo,
   onInitiateEditLastEndedGame,
   onCancelEdit,
@@ -19,6 +18,8 @@ function GameInput({
   boardCharge,
   handleUpdateBoardCharge,
   handleTogglePlayerDropped,
+  selectedWinner,
+  handleSetWinner,
 }) {
   const isLocalGameActive = !!pendingGame?.isLocallyActive;
   const isEditingActive = !!editingGameInfo;
@@ -35,27 +36,7 @@ function GameInput({
   }
 
   const playersInCurrentInteraction = currentGamePlayers || [];
-
-  // ** START: Corrected Logic **
-  // 1. Get only active (not dropped) players
-  const activePlayers = playersInCurrentInteraction.filter(p => !p.dropped);
-  
-  // 2. Base all calculations on active players
-  const nonZeroScoreCountInActive = activePlayers.filter(p => p.score !== 0).length;
-  const potentialWinnersInActive = activePlayers.filter(p => p.score === 0);
-
-  // Condition to identify the winner among active players and disable their input
-  const canIdentifyWinnerForInputDisable = 
-    activePlayers.length > 1 && 
-    nonZeroScoreCountInActive === activePlayers.length - 1;
-  
-  // Condition to enable the end/save game button
-  const canEndOrSaveChanges =
-    isGameEffectivelyActive &&
-    activePlayers.length >= 2 &&
-    potentialWinnersInActive.length === 1 &&
-    nonZeroScoreCountInActive === (activePlayers.length - 1);
-  // ** END: Corrected Logic **
+  const canEndOrSaveChanges = isGameEffectivelyActive && !!selectedWinner;
 
   const nextGameNumberDisplay = games.length > 0
     ? games.reduce((max, g) => Math.max(max, g.gameNumber || 0), 0) + 1
@@ -76,69 +57,91 @@ function GameInput({
 
       {isGameEffectivelyActive ? (
         <>
-          <p className="text-xs sm:text-sm text-gray-300 mb-3">
-            Enter points for losers. One active player must have 0. Use 'Drop' for players who left.
-          </p>
-          <div className="space-y-2 sm:space-y-3 mb-4">
+          {/* --- Clearer Instruction Header --- */}
+          <div className="mb-4 p-3 bg-gray-900 bg-opacity-40 rounded-md">
+            <h4 className="text-sm font-bold text-white mb-1">Select Winner & Enter Scores</h4>
+            <p className="text-xs text-gray-400">
+              Choose a winner with the radio button. Their score will be 0. Enter points for all other players.
+            </p>
+          </div>
+          
+          <div className="space-y-4">
             {playersInCurrentInteraction.map((player) => {
-              // A player is the designated winner if they are active, their score is 0, and all other active players have scores.
-              const isDesignatedWinnerForInput = 
-                !player.dropped && 
-                player.score === 0 && 
-                canIdentifyWinnerForInputDisable;
-
+              const isWinner = selectedWinner === player.name;
               return (
-                <div key={player.name} className={`flex flex-col sm:flex-row items-center gap-2 p-2 rounded-lg transition-colors ${player.dropped ? 'bg-gray-900 bg-opacity-50' : 'bg-transparent'}`}>
-                  <label htmlFor={`score-${player.name}`} className="w-full sm:w-2/5 text-gray-200 text-sm truncate" title={player.name}>
-                    {player.name}
-                    {player.dropped && <span className="text-red-400 text-xs ml-2">[DROPPED]</span>}
-                  </label>
-                  <input
-                    id={`score-${player.name}`}
-                    type="number"
-                    pattern="\d*"
-                    inputMode="numeric"
-                    value={player.score.toString()}
-                    onChange={(e) => handleUpdatePlayerScore(player.name, e.target.value)}
-                    disabled={player.dropped || isDesignatedWinnerForInput}
-                    className={`flex-grow ${inputBaseClass} ${isDesignatedWinnerForInput ? 'ring-2 ring-green-500' : ''} ${player.dropped || isDesignatedWinnerForInput ? 'cursor-not-allowed opacity-50' : ''}`}
-                    placeholder="Points Lost"
-                  />
-                  <button
-                    onClick={() => handleTogglePlayerDropped(player.name)}
-                    className={`w-full sm:w-auto px-3 py-1.5 text-xs font-medium rounded-md shadow-sm transition-colors ${player.dropped ? 'bg-yellow-500 hover:bg-yellow-600 text-black' : 'bg-red-600 hover:bg-red-700 text-white'}`}
-                  >
-                    {player.dropped ? 'Un-drop' : 'Drop'}
-                  </button>
+                // --- Redesigned Responsive Player Row ---
+                <div key={player.name} className={`p-3 rounded-lg transition-colors ${player.dropped ? 'bg-red-900 bg-opacity-20' : 'bg-gray-700 bg-opacity-30'}`}>
+                  <div className="flex flex-wrap items-center gap-x-3">
+                    {/* Top line on mobile, part of the row on desktop */}
+                    <div className="w-full sm:w-auto flex items-center mb-2 sm:mb-0">
+                      <input
+                        type="radio"
+                        id={`winner-${player.name}`}
+                        name="winner"
+                        checked={isWinner}
+                        onChange={() => handleSetWinner(player.name)}
+                        disabled={player.dropped}
+                        className="form-radio h-5 w-5 text-green-500 bg-gray-600 border-gray-500 focus:ring-green-500 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                      <label htmlFor={`winner-${player.name}`} className="flex-grow ml-3 text-gray-100 font-medium truncate cursor-pointer" title={player.name}>
+                        {player.name}
+                        {player.dropped && <span className="text-red-400 text-xs ml-2 font-normal">[DROPPED]</span>}
+                      </label>
+                    </div>
+
+                    {/* Bottom line on mobile, part of the row on desktop */}
+                    <div className="w-full sm:w-auto flex-grow flex items-center gap-2">
+                      <input
+                        id={`score-${player.name}`}
+                        type="number"
+                        pattern="\d*"
+                        inputMode="numeric"
+                        value={player.score.toString()}
+                        onChange={(e) => handleUpdatePlayerScore(player.name, e.target.value)}
+                        disabled={player.dropped || isWinner}
+                        className={`w-full flex-grow ${inputBaseClass} ${isWinner ? 'ring-2 ring-green-500' : ''} ${player.dropped || isWinner ? 'cursor-not-allowed opacity-50' : ''}`}
+                        placeholder="Points Lost"
+                      />
+                      <button
+                        onClick={() => handleTogglePlayerDropped(player.name)}
+                        className={`flex-shrink-0 px-3 py-2 text-xs font-medium rounded-md shadow-sm transition-colors ${player.dropped ? 'bg-yellow-500 hover:bg-yellow-600 text-black' : 'bg-red-600 hover:bg-red-700 text-white'}`}
+                      >
+                        {player.dropped ? 'Un-drop' : 'Drop'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          <div className="flex items-center gap-2 mb-4">
-            <label htmlFor="boardCharge" className="text-gray-200 text-sm whitespace-nowrap font-medium">Board Charge:</label>
-            <input
-              id="boardCharge"
-              type="number"
-              value={boardCharge.toString()}
-              onChange={(e) => handleUpdateBoardCharge(e.target.value)}
-              className={`w-full max-w-[120px] ${inputBaseClass}`}
-              placeholder="e.g., 50"
-            />
+          {/* --- Board Charge & Rotation (Unchanged) --- */}
+          <div className="mt-4 border-t border-gray-700 pt-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <label htmlFor="boardCharge" className="text-gray-200 text-sm whitespace-nowrap font-medium">Board Charge:</label>
+              <input
+                id="boardCharge"
+                type="number"
+                value={boardCharge.toString()}
+                onChange={(e) => handleUpdateBoardCharge(e.target.value)}
+                className={`w-full max-w-[120px] ${inputBaseClass}`}
+                placeholder="e.g., 50"
+              />
+            </div>
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="isRotationGame"
+                checked={gameForUI?.isRotationGame || false}
+                onChange={(e) => onToggleRotationForCurrentGame(e.target.checked)}
+                className="form-checkbox h-4 w-4 text-purple-500 rounded bg-gray-600 border-gray-500"
+              />
+              <label htmlFor="isRotationGame" className="ml-2 text-gray-200 text-sm">Rotation Game</label>
+            </div>
           </div>
-
-          <div className="flex items-center mt-3 mb-4">
-            <input
-              type="checkbox"
-              id="isRotationGame"
-              checked={gameForUI?.isRotationGame || false}
-              onChange={(e) => onToggleRotationForCurrentGame(e.target.checked)}
-              className="form-checkbox h-4 w-4 text-purple-500 rounded bg-gray-600 border-gray-500"
-            />
-            <label htmlFor="isRotationGame" className="ml-2 text-gray-200 text-sm">Rotation Game</label>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-3">
+          
+          {/* --- Action Buttons (Unchanged) --- */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-4 border-t border-gray-700 pt-4">
             <button
               onClick={handleEndGame}
               className={`${primaryButtonClass} sm:flex-1 bg-yellow-500 hover:bg-yellow-600 text-black focus:ring-yellow-400`}
@@ -155,6 +158,7 @@ function GameInput({
           </div>
         </>
       ) : (
+        // --- Setup New Game View (Unchanged) ---
         <>
           <p className="text-xs sm:text-sm text-gray-300 mb-3">Select players for Game {nextGameNumberDisplay}:</p>
           <div className="grid grid-cols-2 xs:grid-cols-3 gap-2 mb-3">

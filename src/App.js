@@ -1,3 +1,5 @@
+// src/App.js
+
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { useFirebase } from './contexts/FirebaseContext';
@@ -11,6 +13,7 @@ import GameInput from './components/GameInput';
 import GameList from './components/GameList';
 import PlayerManager from './components/PlayerManager';
 import ConfirmationDialog from './components/ConfirmationDialog';
+import CreateSlotModal from './components/CreateSlotModal';
 
 function App() {
   const { auth, user, db, appId, userId, loading } = useFirebase();
@@ -21,16 +24,15 @@ function App() {
   const [message, setMessage] = useState('');
   const [showPlayerManager, setShowPlayerManager] = useState(false);
   const [masterPlayerList, setMasterPlayerList] = useState([]);
-  
-  // --- Unified Confirmation State ---
-  const [confirmation, setConfirmation] = useState(null); // { type, payload, message, title }
-
+  const [confirmation, setConfirmation] = useState(null);
   const [pendingGame, setPendingGame] = useState(null);
   const [editingGameInfo, setEditingGameInfo] = useState(null);
   const [boardCharge, setBoardCharge] = useState(0);
+  const [showCreateSlotModal, setShowCreateSlotModal] = useState(false);
+  const [selectedWinner, setSelectedWinner] = useState(null);
   const activeGameIdInUI = useRef(null);
   const prevMasterPlayerListRef = useRef();
-
+  
   const displayMessage = useCallback((msg) => {
     setMessage(msg);
     const timerId = setTimeout(() => setMessage(''), 3000);
@@ -38,82 +40,42 @@ function App() {
   }, []);
 
   const handleGoogleSignIn = useCallback(async () => {
-    // ... (no changes)
-    if (!auth) {
-      displayMessage("Authentication service is not available.");
-      return;
-    }
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-      displayMessage("Signed in successfully!");
-    } catch (error) {
-      console.error("Error during Google sign-in:", error);
-      displayMessage(`Sign-in failed: ${error.message}`);
-    }
-  }, [auth, displayMessage]);
+    if (!auth) return;
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  }, [auth]);
 
   const handleSignOut = useCallback(async () => {
-    // ... (no changes)
-    if (!auth) {
-      displayMessage("Authentication service is not available.");
-      return;
-    }
-    try {
-      await signOut(auth);
-      displayMessage("Signed out successfully!");
-      setSlots([]);
-      setSelectedSlot(null);
-      setGames([]);
-      setCurrentGamePlayers([]);
-      setShowPlayerManager(false);
-      setPendingGame(null);
-      setEditingGameInfo(null);
-      setBoardCharge(0);
-      activeGameIdInUI.current = null;
-    } catch (error) {
-      console.error("Error during sign-out:", error);
-      displayMessage(`Sign-out failed: ${error.message}`);
-    }
-  }, [auth, displayMessage]);
+    if (!auth) return;
+    await signOut(auth);
+    setSelectedSlot(null);
+  }, [auth]);
 
   useEffect(() => {
-    // ... (no changes in fetching logic)
-    if (loading || !db || !user || !appId || !userId) {
-      setSlots([]);
-      return;
+    if (!db || !user || !appId || !userId) {
+        setSlots([]);
+        return;
     }
-    const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
-    const q = query(userSlotsCollectionRef, orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSlots(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
-    }, (error) => {
-      console.error("Error fetching slots:", error);
-      displayMessage(`Error fetching slots: ${error.message}`);
+    const q = query(collection(db, `artifacts/${appId}/users/${userId}/slots`), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, snapshot => {
+        setSlots(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
     });
     return () => unsubscribe();
-  }, [db, user, appId, userId, loading, displayMessage]);
-
+  }, [db, user, appId, userId]);
+  
   useEffect(() => {
-    // ... (no changes in fetching logic)
-    if (loading || !db || !user || !appId || !userId) {
-      setMasterPlayerList([]);
-      return;
+    if (!db || !user || !appId || !userId) {
+        setMasterPlayerList([]);
+        return;
     }
-    const userDocRef = doc(db, `artifacts/${appId}/users/${userId}`);
-    const masterPlayersRef = collection(userDocRef, 'masterPlayers');
-    const q = query(masterPlayersRef, orderBy('name', 'asc'));
+    const q = query(collection(db, `artifacts/${appId}/users/${userId}/masterPlayers`), orderBy('name', 'asc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setMasterPlayerList(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
-    }, (error) => {
-      console.error("Error fetching master player list:", error);
-      displayMessage(`Error fetching master players: ${error.message}`);
+        setMasterPlayerList(snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() })));
     });
     return () => unsubscribe();
-  }, [db, user, appId, userId, loading, displayMessage]);
-
+  }, [db, user, appId, userId]);
+  
   useEffect(() => {
-    // ... (no changes in fetching logic)
     if (editingGameInfo || loading || !db || !user || !appId || !userId || !selectedSlot) {
       if (!editingGameInfo && !pendingGame && !selectedSlot) {
         setGames([]);
@@ -136,135 +98,69 @@ function App() {
         activeGameIdInUI.current = null;
         return;
       }
-      const latestGameDataFromDB = newGamesFromDB.length > 0 ? newGamesFromDB[0] : null;
+      const latestGameDataFromDB = newGamesFromDB[0] || null;
       if (latestGameDataFromDB && !latestGameDataFromDB.endedAt) {
         activeGameIdInUI.current = latestGameDataFromDB.id;
-        const uiScoresShouldBePreserved = activeGameIdInUI.current === latestGameDataFromDB.id &&
-          currentGamePlayers.length === (latestGameDataFromDB.players?.length || 0) &&
-          currentGamePlayers.every(p => latestGameDataFromDB.players.some(dbP => dbP.name === p.name));
-        if (!uiScoresShouldBePreserved) {
-          const initialPlayers = (latestGameDataFromDB.players || [])
+        const initialPlayers = (latestGameDataFromDB.players || [])
             .map(p_db => ({ name: p_db.name, score: p_db.score === undefined ? 0 : p_db.score, dropped: p_db.dropped || false }))
             .filter(p => masterPlayerNamesSet.has(p.name));
           setCurrentGamePlayers(initialPlayers);
-        }
       } else {
         activeGameIdInUI.current = null;
-        const playersForSetup = (latestGameDataFromDB?.players || [])
+        let playersForSetup = (latestGameDataFromDB?.players || [])
           .map(p => ({ name: p.name, score: 0, dropped: false }))
           .filter(p => masterPlayerNamesSet.has(p.name));
         setCurrentGamePlayers(playersForSetup);
       }
-    }, (error) => {
-      console.error("Error fetching games:", error);
-      displayMessage(`Error fetching games details: ${error.message}`);
     });
     prevMasterPlayerListRef.current = masterPlayerList;
     return () => unsubscribe();
   }, [db, user, appId, userId, selectedSlot, masterPlayerList, loading, displayMessage, pendingGame, editingGameInfo]);
 
-  // ** START: Updated Logic **
   const handleSelectSlot = useCallback((slot) => {
-    // If trying to navigate away (slot is null) while a game is active, trigger confirmation
     if (slot === null) {
       if (pendingGame?.isLocallyActive) {
-        setConfirmation({
-          type: 'CANCEL_NEW_GAME',
-          title: 'Cancel New Game?',
-          message: `Are you sure you want to cancel the new game? All progress will be lost.`,
-          payload: { andGoBack: true } // Add a payload to signal navigation
-        });
+        setConfirmation({ type: 'CANCEL_NEW_GAME', title: 'Cancel New Game?', message: `Are you sure you want to cancel the new game? All progress will be lost.`, payload: { andGoBack: true } });
         return;
       }
       if (editingGameInfo) {
-        setConfirmation({
-          type: 'CANCEL_EDIT',
-          title: 'Cancel Edit?',
-          message: `Are you sure you want to cancel editing Game ${editingGameInfo.gameNumber}? Your changes will be lost.`,
-          payload: { andGoBack: true } // Add a payload to signal navigation
-        });
+        setConfirmation({ type: 'CANCEL_EDIT', title: 'Cancel Edit?', message: `Are you sure you want to cancel editing Game ${editingGameInfo.gameNumber}? Your changes will be lost.`, payload: { andGoBack: true } });
         return;
       }
     }
-    // If no game is active, or selecting a new slot (which is blocked by UI), proceed.
     setSelectedSlot(slot);
     setPendingGame(null);
     setEditingGameInfo(null);
     setBoardCharge(0);
+    setSelectedWinner(null);
     activeGameIdInUI.current = null;
     if (!slot) {
       setCurrentGamePlayers([]);
     }
   }, [pendingGame, editingGameInfo]);
 
-  const handleConfirmAction = useCallback(async () => {
-    if (!confirmation) return;
-    const { type, payload } = confirmation;
-
-    switch (type) {
-      case 'CANCEL_NEW_GAME':
-        displayMessage("New game cancelled.");
-        setPendingGame(null);
-        setBoardCharge(0);
-        if (payload?.andGoBack) {
-          setSelectedSlot(null);
-        }
-        break;
-
-      case 'CANCEL_EDIT':
-        displayMessage(`Cancelled editing Game ${editingGameInfo.gameNumber}.`);
-        setEditingGameInfo(null);
-        setBoardCharge(0);
-        if (payload?.andGoBack) {
-          setSelectedSlot(null);
-        }
-        break;
-
-      case 'DELETE_SLOT':
-        if (!payload || !db || !user || !appId || !userId) {
-          displayMessage("Cannot delete slot: System not ready.");
-          break;
-        }
-        try {
-          const slotDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots`, payload.id);
-          await deleteDoc(slotDocRef);
-          displayMessage(`Slot ${payload.slotId} (${payload.date}) has been deleted.`);
-          if (selectedSlot && selectedSlot.id === payload.id) {
-            setSelectedSlot(null);
-          }
-        } catch (error) {
-          console.error("Error deleting slot:", error);
-          displayMessage(`Error deleting slot: ${error.message}`);
-        }
-        break;
-      
-      default:
-        break;
+  const handleCreateNewSlot = useCallback((dropValue) => {
+    if (!db || !user || !appId || !userId) {
+      displayMessage("Database not ready.");
+      return;
     }
-    setConfirmation(null); // Close the dialog after action
-  }, [confirmation, db, user, appId, userId, selectedSlot, editingGameInfo, displayMessage]);
-
-  const handleDismissConfirmation = useCallback(() => {
-    setConfirmation(null);
-  }, []);
-
-  const handleCancelGame = useCallback(() => {
-    if (!pendingGame) return;
-    setConfirmation({
-      type: 'CANCEL_NEW_GAME',
-      title: 'Confirm Cancellation',
-      message: `Are you sure you want to cancel Game ${pendingGame.gameNumber}?`,
+    const today = new Date();
+    const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
+    const q = query(userSlotsCollectionRef, where('date', '==', dateString), orderBy('slotId', 'desc'), limit(1));
+    getDocs(q).then(querySnapshot => {
+      let nextSlotId = 1;
+      if (!querySnapshot.empty) {
+        nextSlotId = querySnapshot.docs[0].data().slotId + 1;
+      }
+      const newSlotData = { slotId: nextSlotId, date: dateString, createdAt: Date.now(), userName: user.displayName || user.email, dropValue: dropValue };
+      addDoc(userSlotsCollectionRef, newSlotData).then(newSlotDoc => {
+        displayMessage(`New slot created with drop value: ${dropValue}`);
+        setSelectedSlot({ id: newSlotDoc.id, ...newSlotData });
+        setShowCreateSlotModal(false);
+      });
     });
-  }, [pendingGame]);
-
-  const handleCancelEdit = useCallback(() => {
-    if (!editingGameInfo) return;
-    setConfirmation({
-      type: 'CANCEL_EDIT',
-      title: 'Confirm Cancellation',
-      message: `Are you sure you want to cancel editing Game ${editingGameInfo.gameNumber}?`,
-    });
-  }, [editingGameInfo]);
+  }, [db, user, appId, userId, displayMessage]);
   
   const initiateDeleteSlot = useCallback((slot) => {
     if (!slot) return;
@@ -275,111 +171,82 @@ function App() {
         payload: slot
     });
   }, []);
-  // ** END: Updated Logic **
+
+  const handleConfirmAction = useCallback(async () => {
+    if (!confirmation) return;
+    const { type, payload } = confirmation;
+    switch (type) {
+      case 'CANCEL_NEW_GAME':
+        displayMessage("New game cancelled.");
+        setPendingGame(null);
+        setBoardCharge(0);
+        setSelectedWinner(null);
+        if (payload?.andGoBack) setSelectedSlot(null);
+        break;
+      case 'CANCEL_EDIT':
+        displayMessage(`Cancelled editing Game ${editingGameInfo.gameNumber}.`);
+        setEditingGameInfo(null);
+        setBoardCharge(0);
+        setSelectedWinner(null);
+        if (payload?.andGoBack) setSelectedSlot(null);
+        break;
+      case 'DELETE_SLOT':
+        if (!payload || !db || !user || !appId || !userId) break;
+        try {
+            const slotDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots`, payload.id);
+            await deleteDoc(slotDocRef);
+            displayMessage(`Slot ${payload.slotId} (${payload.date}) deleted.`);
+            if (selectedSlot && selectedSlot.id === payload.id) {
+                setSelectedSlot(null);
+            }
+        } catch (error) {
+            displayMessage(`Error deleting slot: ${error.message}`);
+        }
+        break;
+      default:
+        break;
+    }
+    setConfirmation(null);
+  }, [confirmation, db, user, appId, userId, selectedSlot, editingGameInfo, displayMessage]);
+
+  const handleDismissConfirmation = useCallback(() => setConfirmation(null), []);
+
+  const handleCancelGame = useCallback(() => {
+    if (!pendingGame) return;
+    setConfirmation({ type: 'CANCEL_NEW_GAME', title: 'Confirm Cancellation', message: `Are you sure you want to cancel Game ${pendingGame.gameNumber}?` });
+  }, [pendingGame]);
+
+  const handleCancelEdit = useCallback(() => {
+    if (!editingGameInfo) return;
+    setConfirmation({ type: 'CANCEL_EDIT', title: 'Confirm Cancellation', message: `Are you sure you want to cancel editing Game ${editingGameInfo.gameNumber}?` });
+  }, [editingGameInfo]);
   
-  // The rest of the functions from previous answers remain unchanged...
-  const handleCreateNewSlot = useCallback(async () => {
-    if (!db || !user || !appId || !userId) {
-      displayMessage("Database not ready or user not signed in.");
-      return;
-    }
-    try {
-      const userSlotsCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots`);
-      const today = new Date();
-      const dateString = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const q = query(userSlotsCollectionRef, where('date', '==', dateString), orderBy('slotId', 'desc'), limit(1));
-      const querySnapshot = await getDocs(q);
-      let nextSlotId = 1;
-      if (!querySnapshot.empty) {
-        nextSlotId = querySnapshot.docs[0].data().slotId + 1;
-      }
-      const newSlotData = {
-        slotId: nextSlotId,
-        date: dateString,
-        createdAt: Date.now(),
-        userName: user.displayName || user.email || 'AnonymousUser',
-      };
-      const newSlotDoc = await addDoc(userSlotsCollectionRef, newSlotData);
-      displayMessage(`New slot created: ${dateString} (ID: ${nextSlotId})`);
-      setSelectedSlot({ id: newSlotDoc.id, ...newSlotData });
-      setPendingGame(null);
-      setEditingGameInfo(null);
-      setBoardCharge(0);
-      setCurrentGamePlayers([]);
-    } catch (error) {
-      console.error("Error creating new slot:", error);
-      displayMessage(`Error creating slot: ${error.message}`);
-    }
-  }, [db, user, appId, userId, displayMessage]);
-
-  const handleStartNewGame = useCallback(() => {
-    if (!selectedSlot) {
-      displayMessage("Please select a slot first.");
-      return;
-    }
-    if (editingGameInfo || games.some(g => !g.endedAt) || pendingGame?.isLocallyActive) {
-      displayMessage("A game is already active. Finish it before starting a new one.");
-      return;
-    }
-    if (currentGamePlayers.length < 2) {
-      displayMessage("A new game needs at least two players.");
-      return;
-    }
-
-    const lastGameNumber = games.length > 0 ? games.reduce((max, g) => Math.max(max, g.gameNumber || 0), 0) : 0;
-    setPendingGame({
-      gameNumber: lastGameNumber + 1,
-      isRotationGame: false,
-      isLocallyActive: true,
-    });
-    setBoardCharge(0);
-    setCurrentGamePlayers(players => players.map(p => ({...p, dropped: false, score: 0})));
-    displayMessage(`New Game ${lastGameNumber + 1} started. Enter scores.`);
-  }, [selectedSlot, currentGamePlayers, games, pendingGame, editingGameInfo, displayMessage]);
-
+  // --- Missing functions are now defined here ---
   const handleUpdatePlayerScore = useCallback((playerName, scoreInput) => {
     const newScore = Math.max(0, parseInt(scoreInput, 10) || 0);
     setCurrentGamePlayers(prev => prev.map(p => (p.name === playerName ? { ...p, score: newScore } : p)));
   }, []);
-    
-  const handleTogglePlayerDropped = useCallback((playerName) => {
-    const player = currentGamePlayers.find(p => p.name === playerName);
-    if (!player) return;
-    if (!player.dropped) {
-        const activePlayers = currentGamePlayers.filter(p => !p.dropped);
-        const nonZeroScoreCountInActive = activePlayers.filter(p => p.score > 0).length;
-        if (player.score > 0) {
-            displayMessage(`Cannot drop ${playerName}. Please clear their score first.`);
-            return;
-        }
-        if (
-            activePlayers.length > 1 &&
-            nonZeroScoreCountInActive === activePlayers.length - 1 &&
-            player.score === 0
-        ) {
-            displayMessage(`Cannot drop ${playerName} as they are the designated winner.`);
-            return;
-        }
-        if (activePlayers.length <= 2) {
-            displayMessage(`Cannot drop ${playerName}. At least two players must remain active.`);
-            return;
-        }
-    }
-    setCurrentGamePlayers(prev =>
-      prev.map(p => {
-        if (p.name === playerName) {
-          const isNowDropped = !p.dropped;
-          return { ...p, dropped: isNowDropped, score: 0 };
-        }
-        return p;
-      })
-    );
-  }, [currentGamePlayers, displayMessage]);
 
   const handleUpdateBoardCharge = useCallback((charge) => {
     const newCharge = Math.max(0, parseInt(charge, 10) || 0);
     setBoardCharge(newCharge);
   }, []);
+
+  const onTogglePlayerForNextGame = useCallback((playerName) => {
+    if (pendingGame?.isLocallyActive || editingGameInfo) {
+      displayMessage("Cannot change player selection while a game is active or being edited.");
+      return;
+    }
+    setCurrentGamePlayers(prev => {
+      const isSelected = prev.some(p => p.name === playerName);
+      if (isSelected) {
+        return prev.filter(p => p.name !== playerName);
+      } else {
+        const playerToAdd = masterPlayerList.find(p => p.name === playerName);
+        return playerToAdd ? [...prev, { name: playerToAdd.name, score: 0, dropped: false }] : prev;
+      }
+    });
+  }, [masterPlayerList, displayMessage, pendingGame, editingGameInfo]);
 
   const handleToggleRotationForCurrentGame = useCallback((isRotation) => {
     if (editingGameInfo) {
@@ -389,84 +256,12 @@ function App() {
     }
   }, [pendingGame, editingGameInfo]);
 
-  const handleEndGame = useCallback(async () => {
-    const isNewGame = pendingGame?.isLocallyActive;
-    const isEditing = !!editingGameInfo;
-    
-    if (!isNewGame && !isEditing) {
-      displayMessage("No active game to end or save.");
-      return;
-    }
-    const activePlayers = currentGamePlayers.filter(p => !p.dropped);
-    if (activePlayers.length < 2) {
-      displayMessage("At least two players must be active (not dropped) to end the game.");
-      return;
-    }
-    const winners = activePlayers.filter(p => p.score === 0);
-    if (winners.length !== 1) {
-      displayMessage("Exactly one active (non-dropped) player must have a score of 0 to be the winner.");
-      return;
-    }
-    const winner = winners[0];
-    let totalPointsTransferred = 0;
-    const finalPlayerScores = currentGamePlayers.map(player => {
-      if (player.dropped) {
-        return { name: player.name, score: 0, dropped: true };
-      }
-      if (player.name === winner.name) {
-        return { name: player.name, score: 0 };
-      }
-      totalPointsTransferred += player.score;
-      return { name: player.name, score: -player.score };
-    });
-    const winnerIdx = finalPlayerScores.findIndex(p => p.name === winner.name);
-    if (winnerIdx !== -1) {
-      finalPlayerScores[winnerIdx].score = totalPointsTransferred - boardCharge;
-    }
-    const commonGameData = {
-      players: finalPlayerScores,
-      winnerPlayerName: winner.name,
-      pointsTransferred: totalPointsTransferred,
-      boardCharge: boardCharge,
-      endedAt: serverTimestamp(),
-    };
-    if (!db || !user || !appId || !userId || !selectedSlot) {
-      displayMessage("Cannot save game: Not signed in or database not ready.");
-      return;
-    }
-    try {
-      if (isEditing) {
-        const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, editingGameInfo.id);
-        await updateDoc(gameDocRef, {
-          ...commonGameData,
-          isRotationGame: editingGameInfo.isRotationGame,
-        });
-        displayMessage(`Game ${editingGameInfo.gameNumber} updated! ${winner.name} won.`);
-        setEditingGameInfo(null);
-      } else if (isNewGame) {
-        const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
-        await addDoc(slotGamesCollectionRef, {
-          ...commonGameData,
-          gameNumber: pendingGame.gameNumber,
-          createdAt: serverTimestamp(),
-          isRotationGame: pendingGame.isRotationGame,
-        });
-        displayMessage(`Game ${pendingGame.gameNumber} ended! ${winner.name} won.`);
-        setPendingGame(null);
-      }
-      setBoardCharge(0);
-    } catch (error) {
-      console.error("Error saving/ending game:", error);
-      displayMessage(`Error saving game: ${error.message}`);
-    }
-  }, [db, user, appId, userId, selectedSlot, games, pendingGame, editingGameInfo, currentGamePlayers, boardCharge, displayMessage]);
-  
   const handleInitiateEditLastEndedGame = useCallback(() => {
     if (!selectedSlot || games.length === 0) {
       displayMessage("No games in this slot to edit.");
       return;
     }
-    const endedGames = games.filter(g => g.endedAt).sort((a, b) => b.endedAt.seconds - a.endedAt.seconds);
+    const endedGames = games.filter(g => g.endedAt).sort((a, b) => b.gameNumber - a.gameNumber);
     if (endedGames.length === 0) {
       displayMessage("No ended games in this slot to edit.");
       return;
@@ -484,89 +279,112 @@ function App() {
     });
     setCurrentGamePlayers(reconstructedPlayers);
     setBoardCharge(lastEndedGame.boardCharge || 0);
+    setSelectedWinner(lastEndedGame.winnerPlayerName);
     setPendingGame(null);
     displayMessage(`Editing Game ${lastEndedGame.gameNumber}. Adjust scores and save.`);
   }, [games, selectedSlot, displayMessage]);
 
-  const handleAddPlayerToMasterList = useCallback(async (playerName) => {
-    if (!db || !user || !appId || !userId) {
-      displayMessage("Not signed in.");
-      return;
-    }
-    const trimmedName = playerName.trim();
-    if (!trimmedName || masterPlayerList.some(p => p.name.toLowerCase() === trimmedName.toLowerCase())) {
-      displayMessage(`Player "${trimmedName}" is invalid or already exists.`);
-      return;
-    }
-    try {
-      const masterPlayersRef = collection(db, `artifacts/${appId}/users/${userId}/masterPlayers`);
-      await addDoc(masterPlayersRef, { name: trimmedName, createdAt: serverTimestamp() });
-      displayMessage(`Player ${trimmedName} added to roster.`);
-    } catch (error) {
-      displayMessage(`Error adding player: ${error.message}`);
-    }
-  }, [db, user, appId, userId, masterPlayerList, displayMessage]);
+  const handleTogglePlayerDropped = useCallback((playerName) => {
+    const dropValue = selectedSlot?.dropValue || 1;
+    setCurrentGamePlayers(prev =>
+      prev.map(p => {
+        if (p.name === playerName) {
+          const isNowDropped = !p.dropped;
+          if (isNowDropped) {
+            if (selectedWinner === playerName) setSelectedWinner(null);
+            return { ...p, dropped: true, score: dropValue };
+          } else {
+            return { ...p, dropped: false, score: 0 };
+          }
+        }
+        return p;
+      })
+    );
+  }, [selectedSlot, selectedWinner]);
 
-  const handleRemovePlayerFromMasterList = useCallback(async (playerId, playerName) => {
-    if (!db || !user || !appId || !userId) {
-      displayMessage("Not signed in.");
+  const handleSetWinner = useCallback((playerName) => {
+    setSelectedWinner(playerName);
+    setCurrentGamePlayers(prev =>
+      prev.map(p => {
+        if (p.name === playerName) return { ...p, score: 0, dropped: false };
+        return p;
+      })
+    );
+  }, []);
+
+  const handleEndGame = useCallback(async () => {
+    if (!selectedWinner) {
+      displayMessage("Please select a winner.");
       return;
     }
-    if (pendingGame?.isLocallyActive && currentGamePlayers.some(p => p.name === playerName) || editingGameInfo && currentGamePlayers.some(p => p.name === playerName)) {
-      displayMessage(`Cannot remove "${playerName}" while they are in an active or edited game.`);
-      return;
-    }
-    try {
-      const playerDocRef = doc(db, `artifacts/${appId}/users/${userId}/masterPlayers`, playerId);
-      await deleteDoc(playerDocRef);
-      displayMessage(`Player ${playerName} removed from roster.`);
-    } catch (error) {
-      displayMessage(`Error removing player: ${error.message}`);
-    }
-  }, [db, user, appId, userId, pendingGame, editingGameInfo, currentGamePlayers, displayMessage]);
-  
-  const onTogglePlayerForNextGame = useCallback((playerName) => {
-    if (pendingGame?.isLocallyActive || editingGameInfo) {
-      displayMessage("Cannot change player selection while a game is active or being edited.");
-      return;
-    }
-    setCurrentGamePlayers(prev => {
-      const isSelected = prev.some(p => p.name === playerName);
-      if (isSelected) {
-        return prev.filter(p => p.name !== playerName);
-      } else {
-        const playerToAdd = masterPlayerList.find(p => p.name === playerName);
-        return playerToAdd ? [...prev, { name: playerToAdd.name, score: 0, dropped: false }] : prev;
-      }
+    const isNewGame = pendingGame?.isLocallyActive;
+    const isEditing = !!editingGameInfo;
+    let totalPointsTransferred = 0;
+    const finalPlayerScores = currentGamePlayers.map(player => {
+      if (player.name === selectedWinner) return { name: player.name, score: 0, dropped: false };
+      totalPointsTransferred += player.score;
+      return { name: player.name, score: -player.score, dropped: player.dropped || false };
     });
-  }, [masterPlayerList, displayMessage, pendingGame, editingGameInfo]);
-
+    const winnerIdx = finalPlayerScores.findIndex(p => p.name === selectedWinner);
+    if (winnerIdx !== -1) finalPlayerScores[winnerIdx].score = totalPointsTransferred - boardCharge;
+    const commonGameData = { players: finalPlayerScores, winnerPlayerName: selectedWinner, pointsTransferred: totalPointsTransferred, boardCharge, endedAt: serverTimestamp() };
+    try {
+        if (isEditing) {
+            const gameDocRef = doc(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`, editingGameInfo.id);
+            await updateDoc(gameDocRef, { ...commonGameData, isRotationGame: editingGameInfo.isRotationGame });
+            displayMessage(`Game ${editingGameInfo.gameNumber} updated!`);
+        } else if (isNewGame) {
+            const slotGamesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/slots/${selectedSlot.id}/games`);
+            await addDoc(slotGamesCollectionRef, { ...commonGameData, gameNumber: pendingGame.gameNumber, createdAt: serverTimestamp(), isRotationGame: pendingGame.isRotationGame });
+            displayMessage(`Game ${pendingGame.gameNumber} ended!`);
+        }
+        setEditingGameInfo(null);
+        setPendingGame(null);
+        setSelectedWinner(null);
+        setBoardCharge(0);
+    } catch (error) {
+        displayMessage(`Error saving game: ${error.message}`);
+    }
+  }, [db, user, appId, userId, selectedSlot, currentGamePlayers, boardCharge, displayMessage, pendingGame, editingGameInfo, selectedWinner]);
+  
+  const handleStartNewGame = useCallback(() => {
+    if (!selectedSlot) {
+      displayMessage("Please select a slot first.");
+      return;
+    }
+    if (editingGameInfo || games.some(g => !g.endedAt) || pendingGame?.isLocallyActive) {
+      displayMessage("A game is already active. Finish it before starting a new one.");
+      return;
+    }
+    if (currentGamePlayers.length < 2) {
+      displayMessage("A new game needs at least two players.");
+      return;
+    }
+    const lastGameNumber = games.length > 0 ? games.reduce((max, g) => Math.max(max, g.gameNumber || 0), 0) : 0;
+    setPendingGame({ gameNumber: lastGameNumber + 1, isRotationGame: false, isLocallyActive: true });
+    setBoardCharge(0);
+    setCurrentGamePlayers(players => players.map(p => ({...p, dropped: false, score: 0})));
+    setSelectedWinner(null);
+    displayMessage(`New Game ${lastGameNumber + 1} started. Enter scores.`);
+  }, [selectedSlot, currentGamePlayers, games, pendingGame, editingGameInfo, displayMessage]);
 
   const renderContent = () => {
-    if (loading) {
-      return <div className="text-center p-6">Loading...</div>;
-    }
-    if (!user) {
-        return (
-            <div className="flex flex-col items-center justify-center flex-grow p-6 text-center bg-gray-800 rounded-xl shadow-lg m-4 max-w-md mx-auto">
-                <h2 className="text-xl font-semibold text-white mb-4">Welcome!</h2>
-                <p className="text-base text-gray-300 mb-6">Please sign in with Google to manage your game scores.</p>
-                <div/>
-            </div>
-        );
-    }
+    if (loading) return <div className="text-center p-6">Loading...</div>;
+    if (!user) return <div className="p-6 text-center">Please sign in.</div>;
     if (selectedSlot) {
       return (
         <div className="p-3 sm:p-4 space-y-4">
              <div className="flex items-center justify-between mb-3">
-                 <button onClick={() => handleSelectSlot(null)} className="flex items-center px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-md shadow-sm text-sm">
+                 <button onClick={() => handleSelectSlot(null)} className="px-3 py-2 bg-gray-700 text-white rounded-md">
                      Back to Slots
                  </button>
-                 <h2 className="text-lg sm:text-xl font-bold text-white text-right truncate">
-                     Slot {selectedSlot.slotId} <span className="font-normal text-sm sm:text-base">({selectedSlot.date})</span>
-                 </h2>
+                 <div className="text-right">
+                    <h2 className="text-lg font-bold text-white">
+                        Slot {selectedSlot.slotId} ({selectedSlot.date})
+                    </h2>
+                    <p className="text-xs text-yellow-400">Drop Value: {selectedSlot.dropValue || 1}</p>
+                 </div>
              </div>
-
           <GameInput
             currentGamePlayers={currentGamePlayers}
             handleUpdatePlayerScore={handleUpdatePlayerScore}
@@ -578,7 +396,6 @@ function App() {
             onTogglePlayerForNextGame={onTogglePlayerForNextGame}
             onToggleRotationForCurrentGame={handleToggleRotationForCurrentGame}
             pendingGame={pendingGame}
-            activeFirestoreGameId={activeGameIdInUI.current}
             editingGameInfo={editingGameInfo}
             onInitiateEditLastEndedGame={handleInitiateEditLastEndedGame}
             onCancelEdit={handleCancelEdit}
@@ -586,22 +403,24 @@ function App() {
             boardCharge={boardCharge}
             handleUpdateBoardCharge={handleUpdateBoardCharge}
             handleTogglePlayerDropped={handleTogglePlayerDropped}
+            selectedWinner={selectedWinner}
+            handleSetWinner={handleSetWinner}
           />
           <GameList games={games} />
         </div>
       );
     }
     return (
-        <div className="p-3 sm:p-4 space-y-4 max-w-2xl mx-auto">
-            <div className="flex flex-col sm:flex-row justify-between items-center mb-3 gap-3 sm:gap-2">
-                <h2 className="text-xl sm:text-2xl font-bold text-white">Your Gaming Slots</h2>
-                <button onClick={() => setShowPlayerManager(true)} className="w-full sm:w-auto px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-md text-xs sm:text-sm">
-                    Manage Player Roster
+        <div className="p-3 sm:p-4 max-w-2xl mx-auto">
+            <div className="flex justify-between items-center mb-3">
+                <h2 className="text-2xl font-bold text-white">Your Slots</h2>
+                <button onClick={() => setShowPlayerManager(true)} className="px-4 py-2 bg-purple-600 text-white rounded-lg">
+                    Manage Roster
                 </button>
             </div>
             <SlotList
                 slots={slots}
-                handleCreateNewSlot={handleCreateNewSlot}
+                handleCreateNewSlot={() => setShowCreateSlotModal(true)}
                 handleSelectSlot={handleSelectSlot}
                 handleDeleteSlot={initiateDeleteSlot}
             />
@@ -610,34 +429,17 @@ function App() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-gray-900 text-gray-100 font-sans">
+    <div className="min-h-screen bg-gray-900 text-gray-100">
       <Header>
         <AuthButtons user={user} handleGoogleSignIn={handleGoogleSignIn} handleSignOut={handleSignOut} />
       </Header>
       <MessageDisplay message={message} />
-      <main className="flex-grow overflow-y-auto p-0 sm:p-1">
+      <main className="p-1">
         {renderContent()}
       </main>
-      {showPlayerManager && (
-        <PlayerManager
-          masterPlayerList={masterPlayerList}
-          onAddPlayer={handleAddPlayerToMasterList}
-          onRemovePlayer={handleRemovePlayerFromMasterList}
-          onClose={() => setShowPlayerManager(false)}
-        />
-      )}
-      {/* --- Unified Confirmation Dialog --- */}
-      {confirmation && (
-        <ConfirmationDialog
-            show={!!confirmation}
-            title={confirmation.title}
-            message={confirmation.message}
-            onConfirm={handleConfirmAction}
-            onCancel={handleDismissConfirmation}
-        />
-      )}
+      {showCreateSlotModal && <CreateSlotModal onClose={() => setShowCreateSlotModal(false)} onCreate={handleCreateNewSlot} />}
+      {confirmation && <ConfirmationDialog show={!!confirmation} title={confirmation.title} message={confirmation.message} onConfirm={handleConfirmAction} onCancel={handleDismissConfirmation} />}
     </div>
   );
 }
-
 export default App;
