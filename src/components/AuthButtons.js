@@ -1,37 +1,54 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 
 function AuthButtons({ user, handleGoogleSignIn, handleSignOut }) {
-  const baseButtonClass = "px-4 py-2 text-sm sm:text-base font-medium rounded-lg shadow-md transition-colors duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800";
 
-  return (
-    <>
-      {user ? (
-        <div className="flex flex-col sm:flex-row items-center sm:items-baseline gap-2 sm:gap-3 w-full sm:w-auto">
-          <span className="text-xs sm:text-sm text-gray-300 order-2 sm:order-1 text-center sm:text-left truncate max-w-[150px] sm:max-w-[200px]" title={user.email || ''}>
-            Hi, {user.displayName ? user.displayName.split(' ')[0] : 'User'}!
+  const avatarUrl = useMemo(() => {
+    if (!user) return '';
+    if (user.photoURL) {
+      return user.photoURL;
+    }
+    const seed = user.uid;
+    return `https://api.dicebear.com/7.x/initials/svg?seed=${seed}`;
+  }, [user]);
+
+  // --- Logged-In State ---
+  if (user) {
+    return (
+      <div className="flex items-center gap-3 sm:gap-4">
+        {/* --- User Info Container --- */}
+        <div className="flex items-center gap-2">
+          {/* Avatar (Always Visible) */}
+          <img
+            src={avatarUrl}
+            alt="User avatar"
+            className="w-9 h-9 rounded-full border-2 border-gray-600 bg-gray-700"
+          />
+          {/* Name (Visible on 'sm' screens and larger) */}
+          <span className="hidden sm:inline text-sm font-medium text-gray-300">
+            {user.displayName || user.email}
           </span>
-          <button
-            onClick={handleSignOut}
-            className={`${baseButtonClass} order-1 sm:order-2 w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white focus:ring-red-500`}
-          >
-            Sign Out
-          </button>
         </div>
-      ) : (
+        
+        {/* Sign Out Button */}
         <button
-          onClick={handleGoogleSignIn}
-          className={`${baseButtonClass} w-full max-w-xs mx-auto sm:w-auto bg-blue-600 hover:bg-blue-700 text-white focus:ring-blue-500 flex items-center justify-center gap-2`}
+          onClick={handleSignOut}
+          className="px-3 py-1.5 text-xs font-semibold bg-red-600 text-white rounded-md shadow-sm hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-gray-800"
+          title="Sign Out"
         >
-          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12.24 10.285V11.85h2.95c-.15 1.05-.72 1.88-1.78 2.53v2.09h2.69c1.58-1.46 2.5-3.6 2.5-6.15 0-.7-.07-1.37-.2-2.02H12.24z" />
-            <path d="M12.24 22c3.24 0 5.95-1.08 7.93-2.93l-2.69-2.09c-1.07.72-2.45 1.15-3.84 1.15-2.95 0-5.46-1.98-6.37-4.66H3.85v2.09C5.46 19.92 8.52 22 12.24 22z" />
-            <path d="M5.87 14.15c-.2-.58-.33-1.2-.33-1.85s.13-1.27.33-1.85V8.36H3.85c-.65 1.3-.98 2.74-.98 4.29s.33 2.99.98 4.29L5.87 14.15z" />
-            <path d="M12.24 4.01c1.77 0 3.32.6 4.56 1.79l2.39-2.39C18.19 1.45 15.48 0 12.24 0 8.52 0 5.46 2.08 3.85 5.14l2.02 1.57C6.78 4.99 9.3 4.01 12.24 4.01z" />
-          </svg>
-          <span>Sign in with Google</span>
+          Sign Out
         </button>
-      )}
-    </>
+      </div>
+    );
+  }
+
+  // --- Logged-Out State ---
+  return (
+    <button
+      onClick={handleGoogleSignIn}
+      className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors"
+    >
+      Sign In with Google
+    </button>
   );
 }
 
